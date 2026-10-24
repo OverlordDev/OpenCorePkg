@@ -69,6 +69,7 @@ typedef struct OC_HOTKEY_CONTEXT_ OC_HOTKEY_CONTEXT;
 #define OC_MENU_DISK_IMAGE            L" (dmg)"
 #define OC_MENU_SHUTDOWN              L"Shutting Down"
 #define OC_MENU_RESTART               L"Restarting"
+#define OC_MENU_EDITOR_HINT           L"F2: Options"
 
 /**
   Predefined flavours.
@@ -758,6 +759,27 @@ EFI_STATUS
   );
 
 /**
+  Run the options editor (boot arguments, configuration) on top of the picker.
+
+  Called with the picker keyboard handling (HotKeyContext) active. The editor takes
+  care of requesting a password if one is used (see OcRequestPrivilege), and takes
+  the console over for as long as it runs. After it returns the picker has to
+  redraw itself fully.
+
+  @param[in,out]  Context    Picker context.
+  @param[in]      BootEntry  Entry highlighted in the picker, optional.
+
+  @retval EFI_SUCCESS        The editor has been used and was left.
+  @retval other              The editor could not be used.
+**/
+typedef
+EFI_STATUS
+(EFIAPI *OC_SHOW_EDITOR)(
+  IN OUT OC_PICKER_CONTEXT  *Context,
+  IN     OC_BOOT_ENTRY      *BootEntry OPTIONAL
+  );
+
+/**
   Get label contents (e.g. '.disk_label' or '.disk_label_2x').
 **/
 typedef
@@ -995,6 +1017,10 @@ struct OC_PICKER_CONTEXT_ {
   // Entry display routine.
   //
   OC_SHOW_MENU                ShowMenu;
+  //
+  // Options editor routine, optional. NULL when editing from the picker is not allowed.
+  //
+  OC_SHOW_EDITOR              ShowEditor;
   //
   // Privilege escalation requesting routine.
   //
@@ -1445,6 +1471,11 @@ OcLoadPickerHotKeys (
 #define OC_INPUT_TYPING_RIGHT      -17          ///< Move right while typing (UI does not have to support)
 #define OC_INPUT_TYPING_CONFIRM    -18          ///< Confirm input while typing (press enter)
 #define OC_INPUT_SWITCH_FOCUS      -19          ///< Switch UI focus (tab and shift+tab)
+#define OC_INPUT_TYPING_HOME       -20          ///< Move to start while typing (UI does not have to support)
+#define OC_INPUT_TYPING_END        -21          ///< Move to end while typing (UI does not have to support)
+#define OC_INPUT_TYPING_DELETE     -22          ///< Delete character under cursor while typing (UI does not have to support)
+#define OC_INPUT_PLUS              -23          ///< Plus or equals key, only with OC_PICKER_KEYS_PLUS_MINUS
+#define OC_INPUT_MINUS             -24          ///< Minus key, only with OC_PICKER_KEYS_PLUS_MINUS
 #define OC_INPUT_FUNCTIONAL(x)  (-50 - (x))     ///< Function hotkeys
 
 /**
@@ -1458,6 +1489,11 @@ OcLoadPickerHotKeys (
 #define OC_PICKER_KEYS_HOTKEYS      BIT1
 #define OC_PICKER_KEYS_VOICE_OVER   BIT2
 #define OC_PICKER_KEYS_TAB_CONTROL  BIT3
+///
+/// Report plus and minus keys (including the ones of the numeric keypad), which the pickers do not use.
+/// Only valid together with navigation keys, not typing.
+///
+#define OC_PICKER_KEYS_PLUS_MINUS   BIT4
 
 #define OC_PICKER_KEYS_FOR_TYPING   \
   (OC_PICKER_KEYS_TYPING | OC_PICKER_KEYS_VOICE_OVER | OC_PICKER_KEYS_TAB_CONTROL)
@@ -1501,6 +1537,23 @@ OcFreeHotKeys (
 EFI_STATUS
 OcRunBootPicker (
   IN  OC_PICKER_CONTEXT  *Context
+  );
+
+/**
+  Make sure the privilege level is reached, requesting a password if passwords are in use.
+  Keyboard handling is set up temporarily unless the picker has it ready.
+
+  @param[in,out]  Context    Picker context.
+  @param[in]      Level      Privilege level to reach.
+
+  @retval EFI_SUCCESS  The privilege level is reached (or no passwords are used).
+  @retval EFI_ABORTED  The request was declined.
+  @retval other        The request failed.
+**/
+EFI_STATUS
+OcRequestPrivilege (
+  IN OUT OC_PICKER_CONTEXT   *Context,
+  IN     OC_PRIVILEGE_LEVEL  Level
   );
 
 /**

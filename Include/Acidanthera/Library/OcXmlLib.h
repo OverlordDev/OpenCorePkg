@@ -198,6 +198,26 @@ XmlNodeContent (
   );
 
 /**
+  Get the location of a parsed element within the buffer given to XmlDocumentParse.
+
+  @param[in]   Node   A pointer to the XML node.
+  @param[out]  Start  Offset of the opening '<' of the element.
+  @param[out]  End    Offset one past the final '>' of the element.
+
+  @retval TRUE   The node was produced by the parser and the range is valid.
+  @retval FALSE  The node was created afterwards (e.g. XmlNodeAppend).
+
+  @warning Parsing modifies the buffer, so callers who need the original text
+           at the reported offsets must parse a copy and keep the original.
+**/
+BOOLEAN
+XmlNodeSourceRange (
+  IN  CONST XML_NODE  *Node,
+  OUT UINT32          *Start,
+  OUT UINT32          *End
+  );
+
+/**
   Change the string content of an XML node.
 
   @param[in,out]  Node     A pointer to the XML node.

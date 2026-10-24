@@ -255,6 +255,15 @@ InternalRunRequestPrivilege (
 }
 
 EFI_STATUS
+OcRequestPrivilege (
+  IN OUT OC_PICKER_CONTEXT   *Context,
+  IN     OC_PRIVILEGE_LEVEL  Level
+  )
+{
+  return InternalRunRequestPrivilege (Context, Level);
+}
+
+EFI_STATUS
 OcRunBootPicker (
   IN OC_PICKER_CONTEXT  *Context
   )

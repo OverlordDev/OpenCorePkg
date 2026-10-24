@@ -22,8 +22,15 @@
 
 [Sources]
   OpenCoreAcpi.c
+  OpenCoreConfigSelect.c
   OpenCoreDevProps.c
+  OpenCoreEditor.c
+  OpenCoreEditorInternal.h
+  OpenCoreEditorUi.c
+  OpenCoreEditorUi.h
+  OpenCoreEditPlist.c
   OpenCoreKernel.c
+  OpenCoreKextOrder.c
   OpenCoreKernelPatch.c
   OpenCoreMisc.c
   OpenCoreNvram.c
@@ -41,6 +48,7 @@
   UefiCpuPkg/UefiCpuPkg.dec
 
 [Guids]
+  gAppleBootVariableGuid
   gEfiMdeModulePkgTokenSpaceGuid
   gOcVendorVariableGuid
 
@@ -95,6 +103,7 @@
   OcDevicePathLib
   OcDevicePropertyLib
   OcDriverConnectionLib
+  OcFileLib
   OcFirmwareVolumeLib
   OcHashServicesLib
   OcLogAggregatorLib
@@ -109,8 +118,10 @@
   OcVirtualFsLib
   OcMacInfoLib
   OcVariableLib
+  OcXmlLib
   PcdLib
   PrintLib
+  ResetSystemLib
   SerialPortLib
   UefiBootServicesTableLib
   UefiLib

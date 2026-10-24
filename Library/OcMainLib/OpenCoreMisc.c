@@ -443,32 +443,16 @@ OcMiscEarlyInit (
   )
 {
   EFI_STATUS      Status;
-  CHAR8           *ConfigData;
-  UINT32          ConfigDataSize;
   EFI_TIME        BootTime;
   CONST CHAR8     *AsciiVault;
   OCS_VAULT_MODE  Vault;
   UINTN           PciDeviceInfoSize;
 
-  ConfigData = OcStorageReadFileUnicode (
-                 Storage,
-                 OPEN_CORE_CONFIG_PATH,
-                 &ConfigDataSize
-                 );
-
-  if (ConfigData != NULL) {
-    DEBUG ((DEBUG_INFO, "OC: Loaded configuration of %u bytes\n", ConfigDataSize));
-
-    Status = OcConfigurationInit (Config, ConfigData, ConfigDataSize, NULL);
-    if (EFI_ERROR (Status)) {
-      DEBUG ((DEBUG_ERROR, "OC: Failed to parse configuration!\n"));
-      CpuDeadLoop ();
-      return EFI_UNSUPPORTED; ///< Should be unreachable.
-    }
-
-    FreePool (ConfigData);
-  } else {
-    DEBUG ((DEBUG_ERROR, "OC: Failed to load configuration!\n"));
+  //
+  // Either the configuration chosen from the picker, or the default one.
+  //
+  Status = OcMiscLoadConfig (Storage, Config);
+  if (EFI_ERROR (Status)) {
     CpuDeadLoop ();
     return EFI_UNSUPPORTED; ///< Should be unreachable.
   }
@@ -563,6 +547,15 @@ OcMiscEarlyInit (
     AsciiVault,
     Storage->HasVault,
     VaultKey != NULL
+    ));
+
+  DEBUG ((
+    DEBUG_INFO,
+    "OC: Configuration %s is in use (%a)\n",
+    OcMiscGetConfigName (),
+    OcMiscGetConfigSource (NULL) == OcConfigSourceOnce ? "chosen for this start" :
+    OcMiscGetConfigSource (NULL) == OcConfigSourceKept ? "chosen to stay" :
+    OcMiscGetConfigSource (NULL) == OcConfigSourceFallback ? "the chosen one could not be used" : "default"
     ));
 
   Status = gRT->GetTime (&BootTime, NULL);
@@ -1034,6 +1027,10 @@ OcMiscBoot (
   OcLoadPickerHotKeys (Context);
 
   Context->AllowSetDefault = Config->Misc.Security.AllowSetDefault;
+
+  if (Config->Misc.Security.AllowPickerEdit) {
+    Context->ShowEditor = OcMiscShowEditor;
+  }
 
   if (Interface != NULL) {
     Status = Interface->PopulateContext (Interface, Storage, Context);

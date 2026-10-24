@@ -116,6 +116,7 @@ OcShowMenuByOc (
 
   mGuiContext.HideAuxiliary        = BootContext->PickerContext->HideAuxiliary;
   mGuiContext.Refresh              = FALSE;
+  mGuiContext.EditRequested        = FALSE;
   mGuiContext.PickerContext        = BootContext->PickerContext;
   mGuiContext.AudioPlaybackTimeout = -1;
 
@@ -221,6 +222,18 @@ OcShowMenuByOc (
 
   *ChosenBootEntry                          = mGuiContext.BootEntry;
   BootContext->PickerContext->HideAuxiliary = mGuiContext.HideAuxiliary;
+
+  if (mGuiContext.EditRequested) {
+    //
+    // The GUI has been torn down by now, so the text mode editor can use the console.
+    // The menu is shown anew afterwards, which is requested explicitly and not through Refresh,
+    // as the editor may ask for a password, which makes use of this very GUI context.
+    //
+    mGuiContext.EditRequested = FALSE;
+    BootContext->PickerContext->ShowEditor (BootContext->PickerContext, mGuiContext.BootEntry);
+    return EFI_ABORTED;
+  }
+
   if (mGuiContext.Refresh) {
     return EFI_ABORTED;
   }

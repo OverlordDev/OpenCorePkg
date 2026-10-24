@@ -21,6 +21,7 @@ buildutil() {
     "TestBmf"
     "TestCpuFrequency"
     "TestDiskImage"
+    "TestEditPlist"
     "TestHelloWorld"
     "TestImg4"
     "TestKextInject"

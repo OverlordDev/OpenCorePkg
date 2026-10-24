@@ -73,6 +73,8 @@ Utilities/RsaTool/RsaTool
 Utilities/TestBmf/Bmf
 Utilities/TestCpuFrequency/CpuFrequency
 Utilities/TestDiskImage/DiskImage
+Utilities/TestEditPlist/EditPlist
+Utilities/TestPickerEditor/PickerEditor
 Utilities/TestHelloWorld/HelloWorld
 Utilities/TestAtapiPath/TestAtapiPath
 Utilities/TestImg4/Img4

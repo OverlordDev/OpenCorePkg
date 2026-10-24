@@ -127,6 +127,7 @@ typedef struct _BOOT_PICKER_GUI_CONTEXT {
   EFI_GRAPHICS_OUTPUT_BLT_PIXEL_UNION    BackgroundColor;
   BOOLEAN                                HideAuxiliary;
   BOOLEAN                                Refresh;
+  BOOLEAN                                EditRequested;
   BOOLEAN                                LightBackground;
   BOOLEAN                                UsePasswordEaseIn;
   BOOLEAN                                UseMenuEaseIn;

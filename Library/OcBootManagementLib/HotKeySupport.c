@@ -523,6 +523,21 @@ GetPickerKeyInfo (
         return;
       }
 
+      if (Keys[0] == AppleHidUsbKbUsageKeyHome) {
+        PickerKeyInfo->OcKeyCode = OC_INPUT_TYPING_HOME;
+        return;
+      }
+
+      if (Keys[0] == AppleHidUsbKbUsageKeyEnd) {
+        PickerKeyInfo->OcKeyCode = OC_INPUT_TYPING_END;
+        return;
+      }
+
+      if (Keys[0] == AppleHidUsbKbUsageKeyDel) {
+        PickerKeyInfo->OcKeyCode = OC_INPUT_TYPING_DELETE;
+        return;
+      }
+
       if (Keys[0] == AppleHidUsbKbUsageKeyEscape) {
         PickerKeyInfo->OcKeyCode = OC_INPUT_TYPING_CLEAR_ALL;
         return;
@@ -583,6 +598,25 @@ GetPickerKeyInfo (
             }
           }
 
+          return;
+        }
+      }
+
+      //
+      // Plus and minus are asked for explicitly, regardless of modifiers: plus is a shifted key.
+      //
+      if ((KeyFilter & OC_PICKER_KEYS_PLUS_MINUS) != 0) {
+        if (  (Keys[0] == AppleHidUsbKbUsageKeyEquals)
+           || (Keys[0] == AppleHidUsbKbUsageKeyPadPlus))
+        {
+          PickerKeyInfo->OcKeyCode = OC_INPUT_PLUS;
+          return;
+        }
+
+        if (  (Keys[0] == AppleHidUsbKbUsageKeyMinus)
+           || (Keys[0] == AppleHidUsbKbUsageKeyPadMinus))
+        {
+          PickerKeyInfo->OcKeyCode = OC_INPUT_MINUS;
           return;
         }
       }

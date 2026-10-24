@@ -584,6 +584,10 @@ OcShowSimpleBootMenu (
           gST->ConOut->OutputString (gST->ConOut, L"|Shutdown|");
         }
 
+        if (BootContext->PickerContext->ShowEditor != NULL) {
+          gST->ConOut->OutputString (gST->ConOut, L"  " OC_MENU_EDITOR_HINT);
+        }
+
         gST->ConOut->OutputString (gST->ConOut, L"\r\n");
       } else {
         //
@@ -857,6 +861,23 @@ OcShowSimpleBootMenu (
         break;
       } else if (PickerKeyInfo.OcKeyCode == OC_INPUT_VOICE_OVER) {
         OcToggleVoiceOver (BootContext->PickerContext, NULL, NULL);
+        break;
+      } else if (  (PickerKeyInfo.OcKeyCode == OC_INPUT_FUNCTIONAL (2))
+                && (BootContext->PickerContext->ShowEditor != NULL))
+      {
+        TimeOutSeconds = 0;
+
+        BootContext->PickerContext->ShowEditor (
+                                      BootContext->PickerContext,
+                                      ChosenEntry >= 0 ? BootEntries[ChosenEntry] : BootContext->DefaultEntry
+                                      );
+
+        //
+        // The editor takes over the whole screen, so the menu has to be drawn from scratch,
+        // with the focus back on the picker as it is not highlighted anywhere anymore.
+        //
+        FocusState    = 0;
+        FirstIndexRow = -1;
         break;
       } else if ((PickerKeyInfo.OcKeyCode != OC_INPUT_NO_ACTION) && (PickerKeyInfo.OcKeyCode >= 0) && ((UINTN)PickerKeyInfo.OcKeyCode < Count)) {
         *ChosenBootEntry               = BootEntries[PickerKeyInfo.OcKeyCode];

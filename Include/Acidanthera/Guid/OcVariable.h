@@ -80,6 +80,13 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 #define OC_RTC_BLACKLIST_VARIABLE_NAME  L"rtc-blacklist"
 
 //
+// Variable used to remember the NVRAM boot-args which were replaced for a single boot
+// from the picker options editor, so that OpenCore can put them back when it starts next.
+// Stored in OC_VENDOR_VARIABLE_GUID.
+//
+#define OC_BOOT_ARGS_BACKUP_VARIABLE_NAME  L"boot-args-backup"
+
+//
 // Variable used to contain background colour for OpenCanopy.
 // This is separate from APPLE_DEFAULT_BACKGROUND_COLOR_VARIABLE_NAME
 // because macOS 10.9 fails to parse APPLE_DEFAULT_BACKGROUND_COLOR_VARIABLE_NAME

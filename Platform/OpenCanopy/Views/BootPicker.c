@@ -1172,6 +1172,21 @@ InternalBootPickerViewKeyEvent (
     return;
   }
 
+  //
+  // F2 opens the (text mode) options editor, which cannot run on top of the GUI,
+  // so the menu is left here and the editor is run by the caller.
+  //
+  if (  (KeyEvent->OcKeyCode == OC_INPUT_FUNCTIONAL (2))
+     && (Context->PickerContext->ShowEditor != NULL))
+  {
+    if (mBootPickerContainer.Obj.Opacity == 0xFF) {
+      Context->EditRequested = TRUE;
+      Context->Refresh       = TRUE;
+    }
+
+    return;
+  }
+
   Entry = InternalGetVolumeEntry (mBootPicker.SelectedIndex);
 
   FocusChangedObj = InternalFocusKeyHandler (

@@ -4,6 +4,10 @@ OpenCore Changelog
 - Made pressed buttons darker instead of highlighting them in OpenCanopy, thx @ilikesn0w
 - Added minor configuration sample improvements, thx @ilikesn0w
 - Fixed not detecting CD/DVD media type in boot picker leading to incorrect icon selection, thx @ilikesn0w
+- Added `AllowPickerEdit` Security option: `F2` in the builtin picker and OpenCanopy opens an options editor to change boot arguments (typed or with a list of usual flags; for a single boot or permanently) and `config.plist` (switches, numbers, strings, data) without leaving OpenCore
+- Added `Kexts` item to the options editor: all kexts of `Kernel` -> `Add` in the load order, switching them on and off, moving them with `+` and `-`, and a check of the order with `OSBundleLibraries` of the kexts, which `F5` can fix
+- Added `Config file` item to the options editor to choose between `config.plist`, `config2.plist` and any other `config*.plist` file of the OpenCore directory, for a single start or until changed, similar to Clover
+- Added source ranges of parsed elements to OcXmlLib (`XmlNodeSourceRange`)
 
 #### v1.0.8
 - Fixed macrecovery utility on Windows, thx @pzhlkj6612

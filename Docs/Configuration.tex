@@ -4317,6 +4317,109 @@ nvram 4D1FDA02-38C7-4A6A-9CC6-4BCCA8B30102:boot-log |
 \begin{enumerate}
 
 \item
+  \texttt{AllowPickerEdit}\\
+  \textbf{Type}: \texttt{plist\ boolean}\\
+  \textbf{Failsafe}: \texttt{false}\\
+  \textbf{Description}: Allow changing boot arguments and \texttt{config.plist} from the
+  OpenCore picker.
+
+  When enabled, pressing \texttt{F2} in the builtin picker (or in OpenCanopy) opens
+  a text mode options screen, similar to the options menu of other boot loaders,
+  with the following choices:
+
+  \begin{itemize}
+  \item \emph{Boot arguments} --- edit the NVRAM \texttt{boot-args} variable, which is
+  read by macOS \texttt{boot.efi}. The new arguments can be applied for a single boot
+  only (the original ones are put back the next time OpenCore starts), kept in NVRAM
+  as with the \texttt{nvram} tool, or additionally saved to \texttt{config.plist}
+  (\texttt{NVRAM} $\rightarrow$ \texttt{Add}).
+  \item \emph{Boot flags} --- a list of the usual boot arguments (\texttt{-v}, \texttt{-s},
+  \texttt{-x}, \texttt{-no\_compat\_check}, \texttt{debug=0x100}, \texttt{keepsyms=1} and so on)
+  which are switched on and off with \texttt{Space}. The result is applied in the same way
+  as edited boot arguments.
+  \item \emph{Edit config.plist} --- browse the loaded configuration as a tree,
+  switch booleans (\texttt{Space} flips \texttt{Enabled} of the selected kext, driver,
+  patch, etc.), change numbers, strings, and data (as hexadecimal bytes), and save the
+  result with \texttt{F10} or when leaving the editor.
+  \item \emph{Kexts} --- all kexts of \texttt{Kernel} $\rightarrow$ \texttt{Add} in the
+  order they are loaded in (see below).
+  \item \emph{Config file} --- choose the configuration file OpenCore starts with
+  (see below).
+  \item \emph{Restart}.
+  \end{itemize}
+
+  Changes to the configuration are written back with the original formatting and
+  comments left intact, the previous file is kept next to it with the \texttt{.bak}
+  suffix (\texttt{config.plist.bak}), and
+  the result must load in OpenCore with no more problems than the original, otherwise
+  nothing is written. Changes take effect after a restart, as most of the configuration
+  is applied before the picker is shown. Keys cannot be added or removed apart
+  from \texttt{boot-args}.
+
+  \emph{Kexts} lists the kexts of \texttt{Kernel} $\rightarrow$ \texttt{Add} in the order of
+  the array, which is the order OpenCore adds them in. \texttt{Space} (or \texttt{Enter})
+  switches the selected kext on and off, \texttt{+} moves it down (later in the order) and
+  \texttt{-} up (earlier), \texttt{F10} saves, and \texttt{Esc} leaves, asking about the changes
+  which were not saved. Moving a kext only exchanges the places of the text of the entries in
+  \texttt{config.plist}, the rest of the file stays as it was. The editor also checks the order
+  the way OpenCore needs it: a kext can only be linked with the kexts that come before it, and
+  the kexts it needs are those named under \texttt{OSBundleLibraries} (and
+  \texttt{OSBundleLibraries\_x86\_64}) in its \texttt{Info.plist}, except the ones of the system
+  (identifiers starting with \texttt{com.apple.}) and those of enabled \texttt{Kernel}
+  $\rightarrow$ \texttt{Force} entries. Switched on kexts that cannot do their job are marked
+  with \texttt{!} and the selected one tells why: its dependency is loaded after it, is switched
+  off, or is not in the list at all. \texttt{F5} puts the switched on kexts in an order in which each
+  comes after the kexts it needs, moving only what has to be moved, and it does nothing to a
+  list that is right. The same marks show kexts which OpenCore would not add at all, because
+  the \texttt{Info.plist} or the executable named in the entry is not in the \texttt{Kexts} directory.
+  A kext which has no \texttt{Enabled} entry gets it when it is switched on.
+  Before the file is written the result is read back and has to show the same kexts in the same
+  order, in the same state, as the list does.
+
+  \emph{Config file} makes it possible to keep several configurations, for example
+  \texttt{config.plist} and \texttt{config2.plist}, in the OpenCore directory (next to
+  \texttt{config.plist}), and to choose between them at the picker. Any file named
+  \texttt{config*.plist} is listed, as long as the name is made of ASCII letters, digits,
+  spaces, and the \texttt{.\_-+()} characters, and is at most 64 characters long.
+  As the configuration is applied before the picker is shown, choosing another file
+  restarts OpenCore, which then loads it:
+
+  \begin{itemize}
+  \item \emph{This time only} --- the chosen file is used for the next start of OpenCore
+  only, after which \texttt{config.plist} is used again.
+  \item \emph{Keep it} --- the chosen file is used for every start until another one is
+  chosen. This is only offered for files with \texttt{AllowPickerEdit} enabled, as there would
+  be no way back from the picker otherwise.
+  \end{itemize}
+
+  Choosing \texttt{config.plist} itself, which is also the default, forgets the choice.
+  The choice is remembered in the \texttt{config.choice} text file of the OpenCore directory:
+  the first line is the file name, the second one is \texttt{once} or \texttt{keep}
+  (\texttt{once} when missing). The file can be created, changed or removed by hand as
+  well, e.g. to go back to \texttt{config.plist} from another operating system: removing
+  \texttt{config.choice} is enough. A choice which makes no sense is removed, and a chosen
+  file which is missing or cannot be loaded is replaced with \texttt{config.plist}, with
+  the editor telling about it. Editing and saving in the editor always applies to the
+  configuration in use, e.g. to \texttt{config2.plist} and \texttt{config2.plist.bak}, and
+  never touches the other files.
+
+  \emph{Note 1}: When \texttt{EnablePassword} is set, the password is required to open
+  the editor.
+
+  \emph{Note 2}: The configuration cannot be changed when the vault is used (see
+  \texttt{Vault}), since it would no longer match the vault, and only
+  \texttt{config.plist} can be used then, other files are not in the vault. Values of
+  \texttt{Security} other than booleans (like \texttt{Vault} and \texttt{ScanPolicy})
+  are protected from changes, as mistakes in them can stop OpenCore from starting.
+
+  \emph{Note 3}: Replacing \texttt{boot-args} for a single boot removes
+  the variable from NVRAM until OpenCore starts again, and relies on the firmware
+  keeping the OpenCore backup variable meanwhile. With emulated NVRAM
+  (e.g. \texttt{OpenVariableRuntimeDxe} and \texttt{nvram.plist}) the original
+  value may not survive, in which case \texttt{NVRAM} $\rightarrow$ \texttt{Add}
+  provides it again.
+
+\item
   \texttt{AllowSetDefault}\\
   \textbf{Type}: \texttt{plist\ boolean}\\
   \textbf{Failsafe}: \texttt{false}\\

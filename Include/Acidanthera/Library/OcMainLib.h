@@ -202,6 +202,42 @@ OcUnloadKernelSupport (
   );
 
 /**
+  Replace the NVRAM boot-args variable.
+
+  When the replacement is for a single boot, the original variable (if it was kept in
+  flash) is put back by OcRestoreBootArgs the next time OpenCore starts. Otherwise
+  the replacement is kept like with the nvram tool.
+
+  @param[in]  Args        New boot arguments, ASCII, empty to remove them.
+  @param[in]  Persistent  TRUE to keep the arguments, FALSE for a single boot.
+
+  @retval EFI_SUCCESS  The variable has been replaced.
+  @retval other        The variable has not been changed.
+**/
+EFI_STATUS
+OcSetBootArgs (
+  IN CONST CHAR8  *Args,
+  IN BOOLEAN      Persistent
+  );
+
+/**
+  Check if boot-args were replaced for a single boot and are yet to be put back.
+**/
+BOOLEAN
+OcIsBootArgsReplaced (
+  VOID
+  );
+
+/**
+  Put back the boot-args variable which was replaced for a single boot by OcSetBootArgs.
+  Called when OpenCore starts, and may be used to cancel the replacement.
+**/
+VOID
+OcRestoreBootArgs (
+  VOID
+  );
+
+/**
   Load NVRAM compatibility support.
 
   @param[in]  Storage   OpenCore storage.
@@ -323,6 +359,129 @@ OcMiscGetVersionString (
   );
 
 /**
+  Longest name of a configuration file which can be chosen, in characters.
+**/
+#define OC_CONFIG_MAX_NAME  64U
+
+/**
+  Largest number of configuration files which are listed.
+**/
+#define OC_CONFIG_MAX_FILES  32U
+
+/**
+  File in the OpenCore directory which remembers the configuration chosen from the picker.
+  Its first line is the name of the configuration file, an optional second line says "keep"
+  when the choice is to stay, otherwise it applies to the next start only.
+**/
+#define OC_CONFIG_CHOICE_PATH  L"config.choice"
+
+/**
+  Where the configuration in use comes from.
+**/
+typedef enum {
+  ///
+  /// The default, OPEN_CORE_CONFIG_PATH.
+  ///
+  OcConfigSourceDefault,
+  ///
+  /// Chosen for this start only.
+  ///
+  OcConfigSourceOnce,
+  ///
+  /// Chosen to stay until another choice is made.
+  ///
+  OcConfigSourceKept,
+  ///
+  /// A choice was made, but it could not be used, and the default is in use instead.
+  ///
+  OcConfigSourceFallback
+} OC_CONFIG_SOURCE;
+
+/**
+  Name of a configuration file.
+**/
+typedef struct {
+  CHAR16    Name[OC_CONFIG_MAX_NAME + 1];
+} OC_CONFIG_FILE;
+
+/**
+  Check if a file name may name a configuration: config*.plist from a safe set of characters.
+
+  @param[in]  Name  File name.
+**/
+BOOLEAN
+OcMiscIsConfigName (
+  IN  CONST CHAR16  *Name
+  );
+
+/**
+  Load the configuration: the one that was chosen in the picker, or the default.
+  A chosen configuration which cannot be loaded is replaced with the default one.
+
+  @param[in]   Storage  OpenCore storage.
+  @param[out]  Config   OpenCore configuration.
+
+  @retval EFI_SUCCESS  The configuration has been loaded.
+  @retval other        Not even the default configuration could be loaded.
+**/
+EFI_STATUS
+OcMiscLoadConfig (
+  IN  OC_STORAGE_CONTEXT  *Storage,
+  OUT OC_GLOBAL_CONFIG    *Config
+  );
+
+/**
+  Get the name of the configuration file in use.
+**/
+CONST CHAR16 *
+OcMiscGetConfigName (
+  VOID
+  );
+
+/**
+  Get where the configuration in use comes from.
+
+  @param[out]  FailedName  Name of a chosen configuration which could not be used, if any.
+**/
+OC_CONFIG_SOURCE
+OcMiscGetConfigSource (
+  OUT CONST CHAR16  **FailedName  OPTIONAL
+  );
+
+/**
+  List the configuration files of the OpenCore directory, the default one first.
+
+  @param[in]   Storage   OpenCore storage.
+  @param[out]  Files     Names of the files.
+  @param[in]   MaxFiles  Capacity of Files.
+
+  @return Number of files found.
+**/
+UINTN
+OcMiscListConfigs (
+  IN  OC_STORAGE_CONTEXT  *Storage,
+  OUT OC_CONFIG_FILE      *Files,
+  IN  UINTN               MaxFiles
+  );
+
+/**
+  Choose the configuration for the next starts of OpenCore. Choosing the default
+  configuration removes the choice.
+
+  @param[in]  Storage     OpenCore storage.
+  @param[in]  Name        Name of the configuration file.
+  @param[in]  Persistent  TRUE to use it until another choice is made, FALSE for the next start only.
+
+  @retval EFI_SUCCESS  The choice has been saved.
+**/
+EFI_STATUS
+OcMiscSetConfigChoice (
+  IN  OC_STORAGE_CONTEXT  *Storage,
+  IN  CONST CHAR16        *Name,
+  IN  BOOLEAN             Persistent
+  );
+
+/**
   Load early miscellaneous support like configuration.
 
   @param[in]  Storage   OpenCore storage.
@@ -385,6 +544,23 @@ VOID
 OcMiscLoadSystemReport (
   IN  OC_GLOBAL_CONFIG  *Config,
   IN  EFI_HANDLE        LoadHandle OPTIONAL
+  );
+
+/**
+  Run the picker options editor: boot arguments and configuration editing.
+  Intended to be set as ShowEditor of the picker context.
+
+  @param[in,out]  Context    Picker context.
+  @param[in]      BootEntry  Entry highlighted in the picker, optional.
+
+  @retval EFI_SUCCESS      The editor has been used and was left.
+  @retval EFI_UNSUPPORTED  The editor cannot be used with the present console.
+**/
+EFI_STATUS
+EFIAPI
+OcMiscShowEditor (
+  IN OUT OC_PICKER_CONTEXT  *Context,
+  IN     OC_BOOT_ENTRY      *BootEntry OPTIONAL
   );
 
 /**

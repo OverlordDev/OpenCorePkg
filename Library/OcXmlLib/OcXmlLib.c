@@ -70,6 +70,13 @@ struct XML_NODE_ {
   CONST CHAR8      *Content;
   XML_NODE         *Real;
   XML_NODE_LIST    *Children;
+  //
+  // Half-open [SourceStart, SourceEnd) range of the whole element within the
+  // parsed buffer, from its opening '<' to the final '>'. Both are zero for
+  // nodes which were not produced by the parser.
+  //
+  UINT32           SourceStart;
+  UINT32           SourceEnd;
 };
 
 struct XML_NODE_LIST_ {
@@ -214,11 +221,13 @@ XmlNodeCreate (
   Node = AllocatePool (sizeof (XML_NODE));
 
   if (Node != NULL) {
-    Node->Name       = Name;
-    Node->Attributes = Attributes;
-    Node->Content    = Content;
-    Node->Real       = Real;
-    Node->Children   = Children;
+    Node->Name        = Name;
+    Node->Attributes  = Attributes;
+    Node->Content     = Content;
+    Node->Real        = Real;
+    Node->Children    = Children;
+    Node->SourceStart = 0;
+    Node->SourceEnd   = 0;
   }
 
   return Node;
@@ -754,9 +763,10 @@ XmlParseTagEnd (
   <tag_name>
   ---
 
-  @param[in,out]  Parser       A pointer to the XML parser.
-  @param[out]     SelfClosing  TRUE to indicate self-closing. Optional.
-  @param[out]     Attributes   Exported XML attributes. Optional.
+  @param[in,out]  Parser        A pointer to the XML parser.
+  @param[out]     SelfClosing   TRUE to indicate self-closing. Optional.
+  @param[out]     Attributes    Exported XML attributes. Optional.
+  @param[out]     OpenPosition  Offset of the opening `<' of the tag. Optional.
 
   @return The parsed opening XML tag.
 **/
@@ -764,8 +774,9 @@ STATIC
 CONST CHAR8 *
 XmlParseTagOpen (
   IN OUT  XML_PARSER  *Parser,
-  OUT  BOOLEAN        *SelfClosing  OPTIONAL,
-  OUT  CONST CHAR8    **Attributes
+  OUT  BOOLEAN        *SelfClosing   OPTIONAL,
+  OUT  CONST CHAR8    **Attributes,
+  OUT  UINT32         *OpenPosition  OPTIONAL
   )
 {
   CHAR8    Current;
@@ -779,6 +790,10 @@ XmlParseTagOpen (
 
   do {
     XmlSkipWhitespace (Parser);
+
+    if (OpenPosition != NULL) {
+      *OpenPosition = Parser->Position;
+    }
 
     //
     // Consume `<'.
@@ -1155,6 +1170,8 @@ XmlParseNode (
   XML_NODE     *Node;
   XML_NODE     *Child;
   UINT32       ReferenceNumber;
+  UINT32       OpenPosition;
+  UINT32       OpenEndPosition;
   BOOLEAN      IsReference;
   BOOLEAN      SelfClosing;
   BOOLEAN      Unprefixed;
@@ -1169,11 +1186,12 @@ XmlParseNode (
   Unprefixed      = FALSE;
   IsReference     = FALSE;
   ReferenceNumber = 0;
+  OpenPosition    = 0;
 
   //
   // Parse open tag.
   //
-  TagOpen = XmlParseTagOpen (Parser, &SelfClosing, &Attributes);
+  TagOpen = XmlParseTagOpen (Parser, &SelfClosing, &Attributes, &OpenPosition);
   if (TagOpen == NULL) {
     if ('/' != XmlParserPeek (Parser, CURRENT_CHARACTER)) {
       XML_PARSER_ERROR (Parser, NO_CHARACTER, "XmlParseNode::tag_open");
@@ -1181,6 +1199,8 @@ XmlParseNode (
 
     return NULL;
   }
+
+  OpenEndPosition = Parser->Position;
 
   XmlSkipWhitespace (Parser);
 
@@ -1190,10 +1210,13 @@ XmlParseNode (
     return NULL;
   }
 
+  Node->SourceStart = OpenPosition;
+
   //
   // If tag ends with `/' it's self closing, skip content lookup.
   //
   if (SelfClosing) {
+    Node->SourceEnd = OpenEndPosition;
     return Node;
   }
 
@@ -1294,6 +1317,8 @@ XmlParseNode (
     XmlNodeFree (Node);
     return NULL;
   }
+
+  Node->SourceEnd = Parser->Position;
 
   if (IsReference && !XmlPushReference (References, Node, ReferenceNumber)) {
     XML_PARSER_ERROR (Parser, 0, "XmlParseNode::reference");
@@ -1471,6 +1496,27 @@ XmlNodeContent (
   ASSERT (Node != NULL);
 
   return Node->Real != NULL ? Node->Real->Content : Node->Content;
+}
+
+BOOLEAN
+XmlNodeSourceRange (
+  IN  CONST XML_NODE  *Node,
+  OUT UINT32          *Start,
+  OUT UINT32          *End
+  )
+{
+  ASSERT (Node  != NULL);
+  ASSERT (Start != NULL);
+  ASSERT (End   != NULL);
+
+  if (Node->SourceEnd <= Node->SourceStart) {
+    return FALSE;
+  }
+
+  *Start = Node->SourceStart;
+  *End   = Node->SourceEnd;
+
+  return TRUE;
 }
 
 VOID

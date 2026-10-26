@@ -626,4 +626,14 @@ OcDriverInfoDump (
   IN EFI_FILE_PROTOCOL  *Root
   );
 
+/**
+  Get the text of the OpenCore log kept in memory.
+
+  @return NUL terminated text, or NULL when there is no log.
+**/
+CONST CHAR8 *
+OcMiscGetLogBuffer (
+  VOID
+  );
+
 #endif // OC_MAIN_LIB

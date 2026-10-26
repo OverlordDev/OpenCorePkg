@@ -2024,6 +2024,55 @@ Done:
 #define ED_KEXT_MAX_KEXTS  1024U
 
 /**
+  An array of dictionaries with Enabled, which the list screen works with.
+**/
+typedef struct {
+  CONST CHAR8     *Title;
+  CONST CHAR8     *Section;
+  CONST CHAR8     *Key;
+  //
+  // Entries which name an item, the first that is not empty is used.
+  //
+  CONST CHAR8     *Names[4];
+  //
+  // Directory of the OpenCore directory where the files are, NULL if there are none to look for.
+  //
+  CONST CHAR16    *Directory;
+  //
+  // Kexts: they need each other and have to be in order.
+  //
+  BOOLEAN         Dependencies;
+  CONST CHAR8     *Explanation;
+} ED_LIST_KIND;
+
+STATIC CHAR8  mListReason[96];
+
+STATIC CONST ED_LIST_KIND  mKindKexts = {
+  "Kexts", "Kernel", "Add", { "BundlePath", NULL }, NULL, TRUE,
+  "Kexts are loaded from the top to the bottom, each needs the ones above it"
+};
+STATIC CONST ED_LIST_KIND  mKindDrivers = {
+  "Drivers", "UEFI", "Drivers", { "Path", "Comment", NULL }, L"Drivers\\", FALSE,
+  "Drivers are loaded from the top to the bottom"
+};
+STATIC CONST ED_LIST_KIND  mKindAcpi = {
+  "ACPI files", "ACPI", "Add", { "Path", "Comment", NULL }, L"ACPI\\", FALSE,
+  "ACPI tables (SSDT, DSDT) which are added to the system"
+};
+STATIC CONST ED_LIST_KIND  mKindAcpiPatch = {
+  "ACPI patches", "ACPI", "Patch", { "Comment", "TableSignature", NULL }, NULL, FALSE,
+  "Patches of ACPI tables"
+};
+STATIC CONST ED_LIST_KIND  mKindTools = {
+  "Tools", "Misc", "Tools", { "Name", "Path", "Comment", NULL }, L"Tools\\", FALSE,
+  "Tools shown in the boot menu"
+};
+STATIC CONST ED_LIST_KIND  mKindEntries = {
+  "Entries", "Misc", "Entries", { "Name", "Path", "Comment", NULL }, NULL, FALSE,
+  "Custom entries shown in the boot menu"
+};
+
+/**
   A kext of Kernel > Add as the kexts screen has it.
 **/
 typedef struct {
@@ -2055,6 +2104,7 @@ typedef struct {
 
 typedef struct {
   ED_STATE           *State;
+  CONST ED_LIST_KIND *Kind;
   EDIT_PLIST         Plist;
   UINT32             Baseline;
   XML_NODE           *Array;
@@ -2094,6 +2144,30 @@ EdDictString (
   Node = EditPlistFindChild (Dict, Key);
   if ((Node != NULL) && (EditPlistNodeKind (Node) == EditPlistKindString)) {
     return EditPlistGetContent (Plist, Node);
+  }
+
+  return "";
+}
+
+/**
+  Get the name of an entry by the keys of the kind.
+**/
+STATIC
+CONST CHAR8 *
+EdEntryName (
+  IN  CONST EDIT_PLIST     *Plist,
+  IN  XML_NODE             *Dict,
+  IN  CONST ED_LIST_KIND   *Kind
+  )
+{
+  UINTN         Index;
+  CONST CHAR8   *Name;
+
+  for (Index = 0; (Index < ARRAY_SIZE (Kind->Names)) && (Kind->Names[Index] != NULL); ++Index) {
+    Name = EdDictString (Plist, Dict, Kind->Names[Index]);
+    if (Name[0] != '\0') {
+      return Name;
+    }
   }
 
   return "";
@@ -2160,6 +2234,27 @@ EdKextReadFiles (
   if (Row->Dict == NULL) {
     Row->FileProblem   = "this is not a dictionary";
     Info->FilesMissing = TRUE;
+    return;
+  }
+
+  if (!Kexts->Kind->Dependencies) {
+    //
+    // Nothing is needed from the files but their being there.
+    //
+    Info->HasInfo = TRUE;
+    if (Kexts->Kind->Directory != NULL) {
+      CONST CHAR8  *File;
+
+      File = EdDictString (&Kexts->Plist, Row->Dict, "Path");
+      if (  (File[0] == '\0')
+         || EFI_ERROR (OcUnicodeSafeSPrint (Path, sizeof (Path), L"%s%a", Kexts->Kind->Directory, File))
+         || !(UnicodeUefiSlashes (Path), OcStorageExistsFileUnicode (Kexts->State->Storage, Path)))
+      {
+        Row->FileProblem   = "the file is missing";
+        Info->FilesMissing = TRUE;
+      }
+    }
+
     return;
   }
 
@@ -2322,7 +2417,8 @@ EdKextsFree (
 STATIC
 EFI_STATUS
 EdKextsLoad (
-  IN  ED_STATE    *State,
+  IN  ED_STATE        *State,
+  IN  CONST ED_LIST_KIND *Kind,
   OUT ED_KEXTS    **Result,
   OUT CONST CHAR8 **Reason
   )
@@ -2344,6 +2440,7 @@ EdKextsLoad (
   }
 
   Kexts->State = State;
+  Kexts->Kind  = Kind;
 
   Status = EdLoadConfig (State, &Kexts->Plist, &Kexts->Baseline, Reason);
   if (EFI_ERROR (Status)) {
@@ -2351,9 +2448,10 @@ EdKextsLoad (
     return Status;
   }
 
-  Kexts->Array = EditPlistFindChild (EditPlistFindChild (Kexts->Plist.Root, "Kernel"), "Add");
+  Kexts->Array = EditPlistFindChild (EditPlistFindChild (Kexts->Plist.Root, Kexts->Kind->Section), Kexts->Kind->Key);
   if (EditPlistNodeKind (Kexts->Array) != EditPlistKindArray) {
-    *Reason = "Kernel > Add is not found in the config";
+    AsciiSPrint (mListReason, sizeof (mListReason), "%a > %a is not found in the config", Kexts->Kind->Section, Kexts->Kind->Key);
+    *Reason = mListReason;
     EdKextsFree (Kexts);
     return EFI_NOT_FOUND;
   }
@@ -2393,8 +2491,8 @@ EdKextsLoad (
         }
       }
 
-      Name = EdDictString (&Kexts->Plist, Entry, "BundlePath");
-      Kexts->Rows[Index].Name    = EdCopyString (Name[0] != '\0' ? Name : "(no BundlePath)");
+      Name = EdEntryName (&Kexts->Plist, Entry, Kexts->Kind);
+      Kexts->Rows[Index].Name    = EdCopyString (Name[0] != '\0' ? Name : "(no name)");
       Kexts->Rows[Index].Comment = EdCopyString (EdDictString (&Kexts->Plist, Entry, "Comment"));
     } else {
       Kexts->Rows[Index].Name    = EdCopyString ("(not a dictionary)");
@@ -2414,7 +2512,7 @@ EdKextsLoad (
   // Kernel > Force: these kexts are read from the system, and are there before the others.
   //
   Force = EditPlistFindChild (EditPlistFindChild (Kexts->Plist.Root, "Kernel"), "Force");
-  if (EditPlistNodeKind (Force) == EditPlistKindArray) {
+  if (Kexts->Kind->Dependencies && (EditPlistNodeKind (Force) == EditPlistKindArray)) {
     Kexts->Provided = AllocateZeroPool (((UINTN)EditPlistChildCount (Force) + 1) * sizeof (*Kexts->Provided));
     for (Index = 0; (Kexts->Provided != NULL) && (Index < EditPlistChildCount (Force)); ++Index) {
       Entry   = EditPlistChildValue (Force, Index);
@@ -2540,7 +2638,13 @@ EdKextDescribe (
 
   switch (Problem->Kind) {
     case EdKextNoFiles:
-      AsciiSPrint (Text, Size, "OpenCore will not add this kext, %a", Kexts->Rows[Kext].FileProblem != NULL ? Kexts->Rows[Kext].FileProblem : "its files are missing");
+      AsciiSPrint (
+        Text,
+        Size,
+        "OpenCore will not add this %a, %a",
+        Kexts->Kind->Dependencies ? "kext" : "item",
+        Kexts->Rows[Kext].FileProblem != NULL ? Kexts->Rows[Kext].FileProblem : "its files are missing"
+        );
       break;
     //
     // The long part is last, as it is cut when it does not fit.
@@ -2603,13 +2707,14 @@ EdKextsDraw (
     AsciiStrCatS (Subtitle, sizeof (Subtitle), Line);
   }
 
-  EdUiTitle (Ui, "Kexts", Subtitle);
-  EdUiPut (Ui, 0, 2, Ui->AttrHint, "Kexts are loaded from the top to the bottom, each needs the ones above it", 0);
+  EdUiTitle (Ui, Kexts->Kind->Title, Subtitle);
+  EdUiPut (Ui, 0, 2, Ui->AttrHint, Kexts->Kind->Explanation, 0);
 
   EdListDraw (Ui, 3, EdUiContentRows (Ui), &Kexts->List, EdKextItem, Kexts);
 
   if (Kexts->Count == 0) {
-    EdUiPut (Ui, 0, 3, Ui->AttrHint, "  (there are no kexts in Kernel > Add)", 0);
+    AsciiSPrint (Line, sizeof (Line), "  (there is nothing in %a > %a)", Kexts->Kind->Section, Kexts->Kind->Key);
+    EdUiPut (Ui, 0, 3, Ui->AttrHint, Line, 0);
   }
 
   if (Kexts->Status[0] != '\0') {
@@ -2621,7 +2726,12 @@ EdKextsDraw (
     EdUiStatus (Ui, Ui->AttrHint, "");
   }
 
-  EdUiHint (Ui, "Space: on/off   +/-: move down/up   F5: fix the order   F10: save   Esc: back");
+  EdUiHint (
+    Ui,
+    Kexts->Kind->Dependencies
+    ? "Space: on/off   +/-: move down/up   F5: fix the order   F10: save   Esc: back"
+    : "Space: on/off   +/-: move down/up   F10: save   Esc: back"
+    );
 }
 
 /**
@@ -2905,7 +3015,7 @@ EdKextsVerify (
   }
 
   Right = FALSE;
-  Array = EditPlistFindChild (EditPlistFindChild (Again.Root, "Kernel"), "Add");
+  Array = EditPlistFindChild (EditPlistFindChild (Again.Root, Kexts->Kind->Section), Kexts->Kind->Key);
   if ((EditPlistNodeKind (Array) == EditPlistKindArray) && (EditPlistChildCount (Array) == Kexts->Count)) {
     Right = TRUE;
     for (Position = 0; Right && (Position < Kexts->Count); ++Position) {
@@ -2920,7 +3030,7 @@ EdKextsVerify (
       Enabled = EditPlistFindChild (Entry, "Enabled");
       On      = (Enabled != NULL) && (EditPlistNodeKind (Enabled) == EditPlistKindBoolean) && EditPlistGetBoolean (&Again, Enabled);
       Right   = EditPlistNodeKind (Entry) == EditPlistKindDict
-                && AsciiStrCmp (EdDictString (&Again, Entry, "BundlePath"), EdDictString (&Kexts->Plist, Kexts->Rows[Kext].Dict, "BundlePath")) == 0
+                && AsciiStrCmp (EdEntryName (&Again, Entry, Kexts->Kind), EdEntryName (&Kexts->Plist, Kexts->Rows[Kext].Dict, Kexts->Kind)) == 0
                 && (Kexts->Rows[Kext].EnabledBroken || (On == Kexts->Enabled[Kext]));
     }
   }
@@ -2965,7 +3075,8 @@ EdKextsSave (
 STATIC
 VOID
 EdKextsEditor (
-  IN OUT ED_STATE  *State
+  IN OUT ED_STATE        *State,
+  IN     CONST ED_LIST_KIND *Kind
   )
 {
   ED_UI               *Ui;
@@ -2980,12 +3091,12 @@ EdKextsEditor (
   Ui = &State->Ui;
 
   EdUiClear (Ui);
-  EdUiTitle (Ui, "Kexts", NULL);
-  EdUiStatus (Ui, Ui->AttrHint, "Reading the kexts...");
+  EdUiTitle (Ui, Kind->Title, NULL);
+  EdUiStatus (Ui, Ui->AttrHint, "Reading the files...");
 
-  Status = EdKextsLoad (State, &Kexts, &Reason);
+  Status = EdKextsLoad (State, Kind, &Kexts, &Reason);
   if (EFI_ERROR (Status)) {
-    EdUiNotify (Ui, Reason != NULL ? Reason : "Cannot read the kexts", TRUE);
+    EdUiNotify (Ui, Reason != NULL ? Reason : "Cannot read the list", TRUE);
     return;
   }
 
@@ -3026,7 +3137,10 @@ EdKextsEditor (
         EdKextsMove (Kexts, FALSE, Visible);
         break;
       case OC_INPUT_FUNCTIONAL (5):
-        EdKextsFix (Kexts, Visible);
+        if (Kexts->Kind->Dependencies) {
+          EdKextsFix (Kexts, Visible);
+        }
+
         break;
       case OC_INPUT_FUNCTIONAL (10):
         Redraw = TRUE;
@@ -3069,6 +3183,1000 @@ EdKextsEditor (
 
 Done:
   EdKextsFree (Kexts);
+}
+
+
+//
+// Switches that are often needed, so they are all in one place.
+//
+
+typedef struct {
+  CONST CHAR8    *Section;
+  CONST CHAR8    *Group;
+  CONST CHAR8    *Key;
+} ED_SWITCH;
+
+STATIC CONST ED_SWITCH  mSwitches[] = {
+  { "Booter", "Quirks", "AvoidRuntimeDefrag" },
+  { "Booter", "Quirks", "DevirtualiseMmio" },
+  { "Booter", "Quirks", "EnableSafeModeSlide" },
+  { "Booter", "Quirks", "EnableWriteUnprotector" },
+  { "Booter", "Quirks", "ProtectUefiServices" },
+  { "Booter", "Quirks", "ProvideCustomSlide" },
+  { "Booter", "Quirks", "RebuildAppleMemoryMap" },
+  { "Booter", "Quirks", "SetupVirtualMap" },
+  { "Booter", "Quirks", "SyncRuntimePermissions" },
+  { "Kernel", "Quirks", "AppleCpuPmCfgLock" },
+  { "Kernel", "Quirks", "AppleXcpmCfgLock" },
+  { "Kernel", "Quirks", "CustomSMBIOSGuid" },
+  { "Kernel", "Quirks", "DisableIoMapper" },
+  { "Kernel", "Quirks", "DisableLinkeditJettison" },
+  { "Kernel", "Quirks", "DisableRtcChecksum" },
+  { "Kernel", "Quirks", "ExtendBTFeatureFlags" },
+  { "Kernel", "Quirks", "ForceAquantiaEthernet" },
+  { "Kernel", "Quirks", "ForceSecureBootScheme" },
+  { "Kernel", "Quirks", "IncreasePciBarSize" },
+  { "Kernel", "Quirks", "LapicKernelPanic" },
+  { "Kernel", "Quirks", "PanicNoKextDump" },
+  { "Kernel", "Quirks", "PowerTimeoutKernelPanic" },
+  { "Kernel", "Quirks", "ProvideCurrentCpuInfo" },
+  { "Kernel", "Quirks", "ThirdPartyDrives" },
+  { "Kernel", "Quirks", "XhciPortLimit" },
+  { "UEFI", "Quirks", "EnableVectorAcceleration" },
+  { "UEFI", "Quirks", "ForgeUefiSupport" },
+  { "UEFI", "Quirks", "ReleaseUsbOwnership" },
+  { "UEFI", "Quirks", "RequestBootVarRouting" },
+  { "UEFI", "Quirks", "UnblockFsConnect" },
+  { "ACPI", "Quirks", "FadtEnableReset" },
+  { "ACPI", "Quirks", "NormalizeHeaders" },
+  { "ACPI", "Quirks", "RebaseRegions" },
+  { "ACPI", "Quirks", "ResetHwSig" },
+  { "ACPI", "Quirks", "ResetLogoStatus" },
+  { "ACPI", "Quirks", "SyncTableIds" },
+  { "Misc", "Boot", "HibernateSkipsPicker" },
+  { "Misc", "Boot", "HideAuxiliary" },
+  { "Misc", "Boot", "PickerAudioAssist" },
+  { "Misc", "Boot", "PollAppleHotKeys" },
+  { "Misc", "Boot", "ShowPicker" },
+  { "Misc", "Debug", "AppleDebug" },
+  { "Misc", "Debug", "ApplePanic" },
+  { "Misc", "Debug", "DisableWatchDog" },
+  { "Misc", "Debug", "SysReport" },
+  { "Misc", "Security", "AllowNvramReset" },
+  { "Misc", "Security", "AllowSetDefault" },
+  { "Misc", "Security", "AuthRestart" },
+  { "Misc", "Security", "BlacklistAppleUpdate" }
+};
+
+typedef struct {
+  XML_NODE    *Node;
+  BOOLEAN     Was;
+  UINTN       Switch;
+} ED_SWITCH_ROW;
+
+typedef struct {
+  ED_STATE         *State;
+  EDIT_PLIST       Plist;
+  UINT32           Baseline;
+  ED_SWITCH_ROW    Rows[ARRAY_SIZE (mSwitches)];
+  UINTN            Count;
+  ED_LIST          List;
+  CHAR8            Status[128];
+  BOOLEAN          StatusIsError;
+} ED_SWITCHES;
+
+STATIC
+VOID
+EdSwitchItem (
+  IN  VOID     *Context,
+  IN  UINTN    Index,
+  OUT CHAR8    *Text,
+  IN  UINTN    Size,
+  OUT BOOLEAN  *Changed,
+  OUT BOOLEAN  *Dim,
+  OUT BOOLEAN  *Error
+  )
+{
+  ED_SWITCHES          *Switches;
+  CONST ED_SWITCH_ROW  *Row;
+  BOOLEAN              On;
+
+  Switches = Context;
+  Row      = &Switches->Rows[Index];
+  On       = EditPlistGetBoolean (&Switches->Plist, Row->Node);
+  *Changed = On != Row->Was;
+  *Dim     = !On;
+  *Error   = FALSE;
+  AsciiSPrint (
+    Text,
+    Size,
+    "[%c]%c %a > %a > %a",
+    On ? 'x' : ' ',
+    *Changed ? '*' : ' ',
+    mSwitches[Row->Switch].Section,
+    mSwitches[Row->Switch].Group,
+    mSwitches[Row->Switch].Key
+    );
+}
+
+STATIC
+BOOLEAN
+EdSwitchesSave (
+  IN OUT ED_SWITCHES  *Switches
+  )
+{
+  EFI_STATUS   Status;
+  CONST CHAR8  *Reason;
+  CHAR8        Line[200];
+
+  if (EditPlistPatchCount (&Switches->Plist) == 0) {
+    return FALSE;
+  }
+
+  Status = EdCommitConfig (Switches->State, &Switches->Plist, Switches->Baseline, &Reason);
+  if (EFI_ERROR (Status)) {
+    AsciiSPrint (Line, sizeof (Line), "%a (%r)", Reason != NULL ? Reason : "Failed", Status);
+    EdUiNotify (&Switches->State->Ui, Line, TRUE);
+    return FALSE;
+  }
+
+  return TRUE;
+}
+
+STATIC
+VOID
+EdSwitchesEditor (
+  IN OUT ED_STATE  *State
+  )
+{
+  ED_UI               *Ui;
+  ED_SWITCHES         *Switches;
+  CONST CHAR8         *Reason;
+  OC_PICKER_KEY_INFO  *Key;
+  ED_SWITCH_ROW       *Row;
+  XML_NODE            *Node;
+  UINTN               Index;
+  UINTN               Visible;
+  INTN                Choice;
+  BOOLEAN             Redraw;
+  BOOLEAN             Value;
+  CHAR8               Line[160];
+
+  Ui       = &State->Ui;
+  Switches = AllocateZeroPool (sizeof (*Switches));
+  if (Switches == NULL) {
+    EdUiNotify (Ui, "Not enough memory", TRUE);
+    return;
+  }
+
+  Switches->State = State;
+  if (EFI_ERROR (EdLoadConfig (State, &Switches->Plist, &Switches->Baseline, &Reason))) {
+    EdUiNotify (Ui, Reason != NULL ? Reason : "Cannot load the config", TRUE);
+    FreePool (Switches);
+    return;
+  }
+
+  for (Index = 0; Index < ARRAY_SIZE (mSwitches); ++Index) {
+    Node = EditPlistFindChild (
+             EditPlistFindChild (EditPlistFindChild (Switches->Plist.Root, mSwitches[Index].Section), mSwitches[Index].Group),
+             mSwitches[Index].Key
+             );
+    if ((Node != NULL) && (EditPlistNodeKind (Node) == EditPlistKindBoolean)) {
+      Switches->Rows[Switches->Count].Node   = Node;
+      Switches->Rows[Switches->Count].Was    = EditPlistGetBoolean (&Switches->Plist, Node);
+      Switches->Rows[Switches->Count].Switch = Index;
+      ++Switches->Count;
+    }
+  }
+
+  Switches->List.Count = Switches->Count;
+  Visible              = EdUiContentRows (Ui);
+  Redraw               = TRUE;
+
+  while (TRUE) {
+    if (Redraw) {
+      EdUiClear (Ui);
+      Redraw = FALSE;
+    }
+
+    {
+      CHAR8  Name[OC_CONFIG_MAX_NAME + 1];
+      CHAR8  Subtitle[160];
+
+      EdConfigNameAscii (Name, sizeof (Name));
+      AsciiSPrint (Subtitle, sizeof (Subtitle), "%a: %u switches", Name, (UINT32)Switches->Count);
+      if (EditPlistPatchCount (&Switches->Plist) > 0) {
+        AsciiSPrint (Line, sizeof (Line), ", %u unsaved changes", EditPlistPatchCount (&Switches->Plist));
+        AsciiStrCatS (Subtitle, sizeof (Subtitle), Line);
+      }
+
+      EdUiTitle (Ui, "Quirks and switches", Subtitle);
+    }
+
+    EdListDraw (Ui, 3, Visible, &Switches->List, EdSwitchItem, Switches);
+    if (Switches->Count == 0) {
+      EdUiPut (Ui, 0, 3, Ui->AttrHint, "  (none of the usual switches is in this config)", 0);
+    }
+
+    EdUiStatus (Ui, Switches->StatusIsError ? Ui->AttrError : Ui->AttrHint, Switches->Status);
+    EdUiHint (Ui, "Space: on/off   F10: save   Esc: back");
+
+    Key = EdUiWaitKey (Ui, FALSE);
+    Switches->Status[0] = '\0';
+
+    switch (Key->OcKeyCode) {
+      case OC_INPUT_UP:
+      case OC_INPUT_DOWN:
+      case OC_INPUT_TOP:
+      case OC_INPUT_BOTTOM:
+        EdListMove (&Switches->List, Visible, Key->OcKeyCode);
+        break;
+      case OC_INPUT_MORE:
+      case OC_INPUT_CONTINUE:
+        if (Switches->Count > 0) {
+          Row   = &Switches->Rows[Switches->List.Selected];
+          Value = !EditPlistGetBoolean (&Switches->Plist, Row->Node);
+          if (EFI_ERROR (EditPlistSetBoolean (&Switches->Plist, Row->Node, Value))) {
+            EdSetStatus (Switches->Status, sizeof (Switches->Status), &Switches->StatusIsError, TRUE, "Cannot change this switch");
+          } else if (Value == Row->Was) {
+            EditPlistRevert (&Switches->Plist, Row->Node);
+          }
+        }
+
+        break;
+      case OC_INPUT_FUNCTIONAL (10):
+        Redraw = TRUE;
+        if (EdSwitchesSave (Switches)) {
+          EdSetStatus (State->Status, sizeof (State->Status), &State->StatusIsError, FALSE, "The config is saved, restart to apply the changes");
+          if (EdUiConfirm (Ui, "Saved. Restart now to apply the changes?")) {
+            EdRestart (State);
+          }
+
+          goto Done;
+        }
+
+        break;
+      case OC_INPUT_LEFT:
+      case OC_INPUT_ABORTED:
+        Redraw = TRUE;
+        if (EditPlistPatchCount (&Switches->Plist) == 0) {
+          goto Done;
+        }
+
+        Choice = EdAskUnsaved (Ui);
+        if (Choice == 2) {
+          goto Done;
+        }
+
+        if ((Choice >= 0) && EdSwitchesSave (Switches)) {
+          EdSetStatus (State->Status, sizeof (State->Status), &State->StatusIsError, FALSE, "The config is saved, restart to apply the changes");
+          if (Choice == 0) {
+            EdRestart (State);
+          }
+
+          goto Done;
+        }
+
+        break;
+      default:
+        break;
+    }
+  }
+
+Done:
+  EditPlistFree (&Switches->Plist);
+  FreePool (Switches);
+}
+
+/**
+  The other lists of the config.
+**/
+STATIC
+VOID
+EdListsMenu (
+  IN OUT ED_STATE  *State
+  )
+{
+  STATIC CONST ED_LIST_KIND  *Kinds[] = { &mKindDrivers, &mKindAcpi, &mKindAcpiPatch, &mKindTools, &mKindEntries };
+
+  CONST CHAR8  *Items[ARRAY_SIZE (Kinds)];
+  UINTN        Selected;
+  INTN         Choice;
+  UINTN        Index;
+
+  for (Index = 0; Index < ARRAY_SIZE (Kinds); ++Index) {
+    Items[Index] = Kinds[Index]->Title;
+  }
+
+  Selected = 0;
+  while (TRUE) {
+    EdUiClear (&State->Ui);
+    EdUiTitle (&State->Ui, "Lists", "Turn items on and off, and put them in order");
+    EdUiHint (&State->Ui, "Up/Down, Enter: choose   Esc: back");
+    Choice = EdUiMenu (&State->Ui, 4, Items, NULL, ARRAY_SIZE (Kinds), &Selected);
+    if (Choice < 0) {
+      return;
+    }
+
+    EdKextsEditor (State, Kinds[Choice]);
+  }
+}
+
+
+//
+// Text to read: the log, and the result of checking the config.
+//
+
+typedef struct {
+  CONST CHAR8    *Text;
+  UINT32         *Starts;
+  UINTN          Count;
+} ED_TEXT;
+
+STATIC
+VOID
+EdTextItem (
+  IN  VOID     *Context,
+  IN  UINTN    Index,
+  OUT CHAR8    *Text,
+  IN  UINTN    Size,
+  OUT BOOLEAN  *Changed,
+  OUT BOOLEAN  *Dim,
+  OUT BOOLEAN  *Error
+  )
+{
+  ED_TEXT      *Lines;
+  CONST CHAR8  *Line;
+  UINTN        Length;
+
+  Lines = Context;
+  Line  = &Lines->Text[Lines->Starts[Index]];
+  for (Length = 0; (Length + 1 < Size) && (Line[Length] != '\0') && (Line[Length] != '\n') && (Line[Length] != '\r'); ++Length) {
+    Text[Length] = Line[Length];
+  }
+
+  Text[Length] = '\0';
+  *Changed     = FALSE;
+  *Dim         = FALSE;
+  *Error       = (Line[0] == '!') || (AsciiStrStr (Text, "Failed") != NULL) || (AsciiStrStr (Text, "ERROR") != NULL);
+}
+
+/**
+  Let the user read text line by line, starting at its end if asked to.
+**/
+STATIC
+VOID
+EdShowText (
+  IN OUT ED_STATE     *State,
+  IN     CONST CHAR8  *Title,
+  IN     CONST CHAR8  *Subtitle,
+  IN     CONST CHAR8  *Text,
+  IN     BOOLEAN      AtEnd
+  )
+{
+  ED_UI               *Ui;
+  ED_TEXT             Lines;
+  ED_LIST             List;
+  OC_PICKER_KEY_INFO  *Key;
+  UINTN               Visible;
+  UINTN               Index;
+  UINTN               Max;
+  CHAR8               Line[96];
+
+  Ui = &State->Ui;
+
+  //
+  // Lines, where the last one may have no break.
+  //
+  Max = 1;
+  for (Index = 0; Text[Index] != '\0'; ++Index) {
+    if (Text[Index] == '\n') {
+      ++Max;
+    }
+  }
+
+  Lines.Text   = Text;
+  Lines.Starts = AllocatePool (Max * sizeof (*Lines.Starts));
+  if (Lines.Starts == NULL) {
+    EdUiNotify (Ui, "Not enough memory", TRUE);
+    return;
+  }
+
+  Lines.Count = 0;
+  for (Index = 0; Text[Index] != '\0'; ++Index) {
+    if ((Index == 0) || (Text[Index - 1] == '\n')) {
+      Lines.Starts[Lines.Count++] = (UINT32)Index;
+    }
+  }
+
+  Visible       = EdUiContentRows (Ui);
+  List.Count    = Lines.Count;
+  List.Selected = AtEnd && (Lines.Count > 0) ? Lines.Count - 1 : 0;
+  List.Top      = List.Selected >= Visible ? List.Selected - Visible + 1 : 0;
+
+  EdUiClear (Ui);
+  while (TRUE) {
+    AsciiSPrint (Line, sizeof (Line), "%a   line %u of %u", Subtitle, (UINT32)(Lines.Count == 0 ? 0 : List.Selected + 1), (UINT32)Lines.Count);
+    EdUiTitle (Ui, Title, Line);
+    EdListDraw (Ui, 3, Visible, &List, EdTextItem, &Lines);
+    EdUiHint (Ui, "Up/Down, Home, End: scroll   Esc: back");
+
+    Key = EdUiWaitKey (Ui, FALSE);
+    switch (Key->OcKeyCode) {
+      case OC_INPUT_UP:
+      case OC_INPUT_DOWN:
+      case OC_INPUT_TOP:
+      case OC_INPUT_BOTTOM:
+        EdListMove (&List, Visible, Key->OcKeyCode);
+        break;
+      case OC_INPUT_LEFT:
+      case OC_INPUT_ABORTED:
+        FreePool (Lines.Starts);
+        return;
+      default:
+        break;
+    }
+  }
+}
+
+STATIC
+VOID
+EdLogViewer (
+  IN OUT ED_STATE  *State
+  )
+{
+  CONST CHAR8  *Log;
+
+  Log = OcMiscGetLogBuffer ();
+  if ((Log == NULL) || (Log[0] == '\0')) {
+    EdUiNotify (&State->Ui, "There is no log: it is kept when Misc > Debug > Target has logging on", TRUE);
+    return;
+  }
+
+  EdShowText (State, "OpenCore log", "The latest is at the end", Log, TRUE);
+}
+
+/**
+  Show the kernel panic which macOS left in NVRAM.
+**/
+STATIC
+VOID
+EdPanicViewer (
+  IN OUT ED_STATE  *State
+  )
+{
+  VOID    *Panic;
+  UINT32  Size;
+
+  Panic = OcReadApplePanicLog (&Size);
+  if ((Panic == NULL) || (Size == 0) || (((CHAR8 *)Panic)[0] == '\0')) {
+    if (Panic != NULL) {
+      FreePool (Panic);
+    }
+
+    EdUiNotify (&State->Ui, "No panic log in NVRAM: macOS keeps it there only after a kernel panic that it could save", TRUE);
+    return;
+  }
+
+  EdShowText (State, "Kernel panic log", "Saved by macOS in NVRAM (aapl,panic-info)", Panic, FALSE);
+  FreePool (Panic);
+}
+
+STATIC
+VOID
+EdAppendLine (
+  IN OUT CHAR8       **Text,
+  IN OUT UINTN       *Length,
+  IN OUT UINTN       *Capacity,
+  IN     CONST CHAR8 *Line
+  )
+{
+  CHAR8  *Bigger;
+  UINTN  Size;
+
+  Size = AsciiStrLen (Line) + 1;
+  if (*Length + Size + 1 > *Capacity) {
+    *Capacity = (*Length + Size + 1) * 2;
+    Bigger    = AllocatePool (*Capacity);
+    if (Bigger == NULL) {
+      return;
+    }
+
+    if (*Text != NULL) {
+      CopyMem (Bigger, *Text, *Length);
+      FreePool (*Text);
+    }
+
+    *Text = Bigger;
+  }
+
+  if (*Text == NULL) {
+    return;
+  }
+
+  CopyMem (&(*Text)[*Length], Line, Size - 1);
+  *Length += Size - 1;
+  (*Text)[(*Length)++] = '\n';
+  (*Text)[*Length]     = '\0';
+}
+
+/**
+  Look at the config for what can be told without starting anything: the structure, and what the
+  lists point to which is not there.
+**/
+STATIC
+VOID
+EdCheckConfigScreen (
+  IN OUT ED_STATE  *State
+  )
+{
+  STATIC CONST ED_LIST_KIND  *Kinds[] = { &mKindKexts, &mKindDrivers, &mKindAcpi, &mKindAcpiPatch, &mKindTools, &mKindEntries };
+
+  EFI_STATUS   Status;
+  EDIT_PLIST   Plist;
+  UINT32       Baseline;
+  CONST CHAR8  *Reason;
+  CHAR8        *Text;
+  UINTN        Length;
+  UINTN        Capacity;
+  CHAR8        *Body;
+  UINTN        BodyLength;
+  UINTN        BodyCapacity;
+  CHAR8        Line[200];
+  ED_KEXTS     *Kexts;
+  UINTN        Kind;
+  UINT32       Index;
+  UINT32       Total;
+  BOOLEAN      Dummy;
+  CHAR8        Name[OC_CONFIG_MAX_NAME + 1];
+  CHAR8        Describe[160];
+
+  EdUiClear (&State->Ui);
+  EdUiTitle (&State->Ui, "Check the config", NULL);
+  EdUiStatus (&State->Ui, State->Ui.AttrHint, "Checking...");
+
+  Status = EdLoadConfig (State, &Plist, &Baseline, &Reason);
+  if (EFI_ERROR (Status)) {
+    EdUiNotify (&State->Ui, Reason != NULL ? Reason : "Cannot load the config", TRUE);
+    return;
+  }
+
+  EditPlistFree (&Plist);
+
+  Text         = NULL;
+  Length       = 0;
+  Capacity     = 0;
+  Body         = NULL;
+  BodyLength   = 0;
+  BodyCapacity = 0;
+  Total        = 0;
+
+  if (Baseline > 0) {
+    AsciiSPrint (Line, sizeof (Line), "! Structure: %u problems (unknown or wrongly typed keys), the log has details", Baseline);
+    EdAppendLine (&Body, &BodyLength, &BodyCapacity, Line);
+    Total += Baseline;
+  } else {
+    EdAppendLine (&Body, &BodyLength, &BodyCapacity, "Structure: no problems found");
+  }
+
+  for (Kind = 0; Kind < ARRAY_SIZE (Kinds); ++Kind) {
+    if (EFI_ERROR (EdKextsLoad (State, Kinds[Kind], &Kexts, &Reason))) {
+      continue;
+    }
+
+    for (Index = 0; Index < Kexts->Count; ++Index) {
+      if (Kexts->Problems[Kexts->Order[Index]].Kind == EdKextOk) {
+        continue;
+      }
+
+      EdKextDescribe (Kexts, Kexts->Order[Index], Describe, sizeof (Describe), &Dummy);
+      AsciiSPrint (Line, sizeof (Line), "! %a: %a", Kinds[Kind]->Title, Kexts->Rows[Kexts->Order[Index]].Name);
+      EdAppendLine (&Body, &BodyLength, &BodyCapacity, Line);
+      AsciiSPrint (Line, sizeof (Line), "    %a", Describe);
+      EdAppendLine (&Body, &BodyLength, &BodyCapacity, Line);
+      ++Total;
+    }
+
+    EdKextsFree (Kexts);
+  }
+
+  EdConfigNameAscii (Name, sizeof (Name));
+  if (Total == 0) {
+    AsciiSPrint (Line, sizeof (Line), "No problems found in %a", Name);
+  } else {
+    AsciiSPrint (Line, sizeof (Line), "%u problems found in %a", Total, Name);
+  }
+
+  EdAppendLine (&Text, &Length, &Capacity, Line);
+  EdAppendLine (&Text, &Length, &Capacity, "");
+  if (Body != NULL) {
+    EdAppendLine (&Text, &Length, &Capacity, Body);
+    FreePool (Body);
+  }
+
+  EdAppendLine (&Text, &Length, &Capacity, "");
+  EdAppendLine (&Text, &Length, &Capacity, "Checked: structure, kexts and their order, files of drivers, ACPI and tools.");
+  EdAppendLine (&Text, &Length, &Capacity, "Not checked: the values of settings (use ocvalidate on a computer for that).");
+
+  if (Text == NULL) {
+    EdUiNotify (&State->Ui, "Not enough memory", TRUE);
+    return;
+  }
+
+  EdShowText (State, "Check the config", Name, Text, FALSE);
+  FreePool (Text);
+}
+
+
+//
+// Comparing two configs, and going back to the config before the last save.
+//
+
+typedef struct {
+  EDIT_PLIST  *A;
+  EDIT_PLIST  *B;
+  CHAR8       *Text;
+  UINTN       Length;
+  UINTN       Capacity;
+  UINT32      Lines;
+} ED_DIFF;
+
+#define ED_DIFF_MAX_LINES  300U
+
+STATIC
+VOID
+EdDiffLine (
+  IN OUT ED_DIFF     *Diff,
+  IN     CONST CHAR8 *Mark,
+  IN     CONST CHAR8 *Path,
+  IN     CONST CHAR8 *Detail
+  )
+{
+  CHAR8  Line[400];
+
+  if (Diff->Lines >= ED_DIFF_MAX_LINES) {
+    return;
+  }
+
+  AsciiSPrint (Line, sizeof (Line), "%a %a%a%a", Mark, Path, Detail[0] != '\0' ? ": " : "", Detail);
+  EdAppendLine (&Diff->Text, &Diff->Length, &Diff->Capacity, Line);
+  ++Diff->Lines;
+}
+
+STATIC
+CONST CHAR8 *
+EdAnyName (
+  IN  CONST EDIT_PLIST  *Plist,
+  IN  XML_NODE          *Entry
+  )
+{
+  STATIC CONST CHAR8  *Keys[] = { "BundlePath", "Path", "Name", "Identifier", "Comment" };
+
+  UINTN        Index;
+  CONST CHAR8  *Name;
+
+  if (EditPlistNodeKind (Entry) != EditPlistKindDict) {
+    return "";
+  }
+
+  for (Index = 0; Index < ARRAY_SIZE (Keys); ++Index) {
+    Name = EdDictString (Plist, Entry, Keys[Index]);
+    if (Name[0] != '\0') {
+      return Name;
+    }
+  }
+
+  return "";
+}
+
+STATIC
+VOID
+EdDiffNodes (
+  IN OUT ED_DIFF  *Diff,
+  IN     XML_NODE *A,
+  IN     XML_NODE *B,
+  IN OUT CHAR8    *Path,
+  IN     UINTN    PathSize,
+  IN     UINTN    Depth
+  )
+{
+  UINTN            Length;
+  UINT32           Index;
+  UINT32           Other;
+  UINT32           Previous;
+  UINT32           Scan;
+  CONST CHAR8      *Key;
+  XML_NODE         *Match;
+  CONST CHAR8      *Name;
+  BOOLEAN          *Used;
+  BOOLEAN          Ordered;
+  CHAR8            First[120];
+  CHAR8            Second[120];
+  CHAR8            Detail[300];
+  EDIT_PLIST_KIND  Kind;
+
+  Kind = EditPlistNodeKind (A);
+  if ((Kind != EditPlistNodeKind (B)) || (Depth > 12)) {
+    if (Kind != EditPlistNodeKind (B)) {
+      EdDiffLine (Diff, "~", Path, "different kinds of values");
+    }
+
+    return;
+  }
+
+  Length = AsciiStrLen (Path);
+
+  switch (Kind) {
+    case EditPlistKindDict:
+      for (Index = 0; Index < EditPlistChildCount (A); ++Index) {
+        Key = EditPlistChildKey (A, Index);
+        AsciiSPrint (&Path[Length], PathSize - Length, "/%a", Key);
+        Match = EditPlistFindChild (B, Key);
+        if (Match == NULL) {
+          EdDiffLine (Diff, "-", Path, "only in the first");
+        } else {
+          EdDiffNodes (Diff, EditPlistChildValue (A, Index), Match, Path, PathSize, Depth + 1);
+        }
+
+        Path[Length] = '\0';
+      }
+
+      for (Index = 0; Index < EditPlistChildCount (B); ++Index) {
+        Key = EditPlistChildKey (B, Index);
+        if (EditPlistFindChild (A, Key) == NULL) {
+          AsciiSPrint (&Path[Length], PathSize - Length, "/%a", Key);
+          EdDiffLine (Diff, "+", Path, "only in the second");
+          Path[Length] = '\0';
+        }
+      }
+
+      break;
+    case EditPlistKindArray:
+      Used = AllocateZeroPool (((UINTN)EditPlistChildCount (B) + 1) * sizeof (*Used));
+      if (Used == NULL) {
+        return;
+      }
+
+      Previous = 0;
+      Ordered  = TRUE;
+      for (Index = 0; Index < EditPlistChildCount (A); ++Index) {
+        Name  = EdAnyName (Diff->A, EditPlistChildValue (A, Index));
+        Other = MAX_UINT32;
+        if (Name[0] != '\0') {
+          for (Scan = 0; Scan < EditPlistChildCount (B); ++Scan) {
+            if (!Used[Scan] && (AsciiStrCmp (EdAnyName (Diff->B, EditPlistChildValue (B, Scan)), Name) == 0)) {
+              Other = Scan;
+              break;
+            }
+          }
+        } else if ((Index < EditPlistChildCount (B)) && !Used[Index] && (EdAnyName (Diff->B, EditPlistChildValue (B, Index))[0] == '\0')) {
+          Other = Index;
+        }
+
+        if (Name[0] != '\0') {
+          AsciiSPrint (&Path[Length], PathSize - Length, "/%a", Name);
+        } else {
+          AsciiSPrint (&Path[Length], PathSize - Length, "/[%u]", Index);
+        }
+
+        if (Other == MAX_UINT32) {
+          EdDiffLine (Diff, "-", Path, "only in the first");
+        } else {
+          Used[Other] = TRUE;
+          if (Other < Previous) {
+            Ordered = FALSE;
+          } else {
+            Previous = Other;
+          }
+
+          EdDiffNodes (Diff, EditPlistChildValue (A, Index), EditPlistChildValue (B, Other), Path, PathSize, Depth + 1);
+        }
+
+        Path[Length] = '\0';
+      }
+
+      for (Index = 0; Index < EditPlistChildCount (B); ++Index) {
+        if (!Used[Index]) {
+          Name = EdAnyName (Diff->B, EditPlistChildValue (B, Index));
+          if (Name[0] != '\0') {
+            AsciiSPrint (&Path[Length], PathSize - Length, "/%a", Name);
+          } else {
+            AsciiSPrint (&Path[Length], PathSize - Length, "/[%u]", Index);
+          }
+
+          EdDiffLine (Diff, "+", Path, "only in the second");
+          Path[Length] = '\0';
+        }
+      }
+
+      if (!Ordered) {
+        EdDiffLine (Diff, "~", Path, "the order is different");
+      }
+
+      FreePool (Used);
+      break;
+    default:
+      EdDescribeValue (Diff->A, A, First, sizeof (First));
+      EdDescribeValue (Diff->B, B, Second, sizeof (Second));
+      if (  (AsciiStrCmp (First, Second) != 0)
+         || (((Kind == EditPlistKindString) || (Kind == EditPlistKindData)) && (AsciiStrCmp (EditPlistGetContent (Diff->A, A), EditPlistGetContent (Diff->B, B)) != 0)))
+      {
+        AsciiSPrint (Detail, sizeof (Detail), "%a  ->  %a", First, Second);
+        EdDiffLine (Diff, "~", Path, Detail);
+      }
+
+      break;
+  }
+}
+
+STATIC
+EFI_STATUS
+EdLoadNamedConfig (
+  IN  ED_STATE      *State,
+  IN  CONST CHAR16  *Name,
+  OUT EDIT_PLIST    *Plist
+  )
+{
+  VOID    *Data;
+  UINT32  Size;
+
+  Data = OcStorageReadFileUnicode (State->Storage, Name, &Size);
+  if (Data == NULL) {
+    return EFI_NOT_FOUND;
+  }
+
+  if (EFI_ERROR (EditPlistLoad (Plist, Data, Size))) {
+    FreePool (Data);
+    return EFI_COMPROMISED_DATA;
+  }
+
+  FreePool (Data);
+  return EFI_SUCCESS;
+}
+
+STATIC
+VOID
+EdCompareConfigs (
+  IN OUT ED_STATE  *State
+  )
+{
+  OC_CONFIG_FILE  *Files;
+  CHAR8           Names[16][OC_CONFIG_MAX_NAME + 1];
+  CONST CHAR8     *Items[16];
+  UINTN           Count;
+  UINTN           Shown;
+  UINTN           Index;
+  UINTN           Selected;
+  INTN            Choice;
+  EDIT_PLIST      A;
+  EDIT_PLIST      B;
+  ED_DIFF         Diff;
+  CHAR8           Path[400];
+  CHAR8           Title[160];
+  CHAR8           Mine[OC_CONFIG_MAX_NAME + 1];
+
+  Files = AllocateZeroPool (OC_CONFIG_MAX_FILES * sizeof (*Files));
+  if (Files == NULL) {
+    EdUiNotify (&State->Ui, "Not enough memory", TRUE);
+    return;
+  }
+
+  Count = OcMiscListConfigs (State->Storage, Files, OC_CONFIG_MAX_FILES);
+  Shown = 0;
+  for (Index = 0; (Index < Count) && (Shown < ARRAY_SIZE (Items)); ++Index) {
+    if (!EdSameConfigName (Files[Index].Name, OcMiscGetConfigName ())) {
+      EdUnicodeToAscii (Files[Index].Name, Names[Shown], sizeof (Names[Shown]));
+      Items[Shown] = Names[Shown];
+      Files[Shown] = Files[Index];
+      ++Shown;
+    }
+  }
+
+  EdConfigNameAscii (Mine, sizeof (Mine));
+  EdUiClear (&State->Ui);
+  AsciiSPrint (Title, sizeof (Title), "Compare %a with:", Mine);
+  EdUiTitle (&State->Ui, "Compare configs", Title);
+  if (Shown == 0) {
+    FreePool (Files);
+    EdUiNotify (&State->Ui, "There is no other config to compare with", TRUE);
+    return;
+  }
+
+  EdUiHint (&State->Ui, "Up/Down, Enter: choose   Esc: back");
+  Selected = 0;
+  Choice   = EdUiMenu (&State->Ui, 4, Items, NULL, Shown, &Selected);
+  if (Choice < 0) {
+    FreePool (Files);
+    return;
+  }
+
+  if (EFI_ERROR (EdLoadNamedConfig (State, OcMiscGetConfigName (), &A))) {
+    FreePool (Files);
+    EdUiNotify (&State->Ui, "Cannot read the config in use", TRUE);
+    return;
+  }
+
+  if (EFI_ERROR (EdLoadNamedConfig (State, Files[Choice].Name, &B))) {
+    EditPlistFree (&A);
+    FreePool (Files);
+    EdUiNotify (&State->Ui, "Cannot read that config", TRUE);
+    return;
+  }
+
+  ZeroMem (&Diff, sizeof (Diff));
+  Diff.A  = &A;
+  Diff.B  = &B;
+  Path[0] = '\0';
+  EdAppendLine (&Diff.Text, &Diff.Length, &Diff.Capacity, "- only in the first   + only in the second   ~ differs");
+  EdAppendLine (&Diff.Text, &Diff.Length, &Diff.Capacity, "");
+  Diff.Lines = 0;
+  EdDiffNodes (&Diff, A.Root, B.Root, Path, sizeof (Path), 0);
+
+  if (Diff.Lines == 0) {
+    EdAppendLine (&Diff.Text, &Diff.Length, &Diff.Capacity, "No differences");
+  } else if (Diff.Lines >= ED_DIFF_MAX_LINES) {
+    EdAppendLine (&Diff.Text, &Diff.Length, &Diff.Capacity, "... and more, only the first lines are shown");
+  }
+
+  AsciiSPrint (Title, sizeof (Title), "%a  ->  %a", Mine, Items[Choice]);
+  if (Diff.Text != NULL) {
+    EdShowText (State, "Compare configs", Title, Diff.Text, FALSE);
+    FreePool (Diff.Text);
+  }
+
+  EditPlistFree (&A);
+  EditPlistFree (&B);
+  FreePool (Files);
+}
+
+/**
+  Put the config from before the last save back. The present one becomes the backup then.
+**/
+STATIC
+VOID
+EdRestoreBackup (
+  IN OUT ED_STATE  *State
+  )
+{
+  CHAR16      BackupName[OC_CONFIG_MAX_NAME + 8];
+  VOID        *Backup;
+  VOID        *Present;
+  UINT32      BackupSize;
+  UINT32      PresentSize;
+  UINT32      Errors;
+  EFI_STATUS  Status;
+  CHAR8       Line[160];
+  CHAR8       Name[OC_CONFIG_MAX_NAME + 1];
+
+  UnicodeSPrint (BackupName, sizeof (BackupName), L"%s.bak", OcMiscGetConfigName ());
+  Backup  = OcStorageReadFileUnicode (State->Storage, BackupName, &BackupSize);
+  Present = OcStorageReadFileUnicode (State->Storage, OcMiscGetConfigName (), &PresentSize);
+  EdConfigNameAscii (Name, sizeof (Name));
+
+  if ((Backup == NULL) || (Present == NULL)) {
+    AsciiSPrint (Line, sizeof (Line), "There is no %a.bak: nothing was saved from the editor yet", Name);
+    EdUiNotify (&State->Ui, Line, TRUE);
+  } else if (EFI_ERROR (EditPlistCountErrors (Backup, BackupSize, &Errors))) {
+    EdUiNotify (&State->Ui, "The backup is not a config OpenCore can load", TRUE);
+  } else {
+    AsciiSPrint (Line, sizeof (Line), "Put %a.bak back as %a? The present one will be kept as the backup", Name, Name);
+    if (EdUiConfirm (&State->Ui, Line)) {
+      Status = EdWriteConfig (State->Storage, Present, PresentSize, Backup, BackupSize);
+      if (EFI_ERROR (Status)) {
+        EdUiNotify (&State->Ui, "Cannot write the config (the file system may be read-only)", TRUE);
+      } else {
+        EdSetStatus (State->Status, sizeof (State->Status), &State->StatusIsError, FALSE, "The previous config is back, restart to apply it");
+      }
+    }
+  }
+
+  if (Backup != NULL) {
+    FreePool (Backup);
+  }
+
+  if (Present != NULL) {
+    FreePool (Present);
+  }
 }
 
 //
@@ -3428,9 +4536,9 @@ EdMainMenu (
   ED_BOOT_ARGS      Args;
   CHAR8             Subtitle[160];
   CHAR8             Name[128];
-  CHAR8             Texts[7][200];
-  CONST CHAR8       *Items[7];
-  BOOLEAN           Enabled[7];
+  CHAR8             Texts[14][200];
+  CONST CHAR8       *Items[14];
+  BOOLEAN           Enabled[14];
   UINTN             Count;
   UINTN             Selected;
   INTN              Choice;
@@ -3486,6 +4594,34 @@ EdMainMenu (
     Enabled[Count] = TRUE;
     ++Count;
 
+    Items[Count]   = "Drivers, ACPI, Tools  (on/off and order)";
+    Enabled[Count] = TRUE;
+    ++Count;
+
+    Items[Count]   = "Quirks            (usual switches)";
+    Enabled[Count] = TRUE;
+    ++Count;
+
+    Items[Count]   = "Check the config  (problems found)";
+    Enabled[Count] = TRUE;
+    ++Count;
+
+    Items[Count]   = "Log               (what OpenCore did)";
+    Enabled[Count] = TRUE;
+    ++Count;
+
+    Items[Count]   = "Kernel panic log  (left by macOS in NVRAM)";
+    Enabled[Count] = TRUE;
+    ++Count;
+
+    Items[Count]   = "Compare configs   (what differs)";
+    Enabled[Count] = TRUE;
+    ++Count;
+
+    Items[Count]   = "Undo the last save (put the .bak back)";
+    Enabled[Count] = TRUE;
+    ++Count;
+
     AsciiSPrint (
       Texts[Count],
       sizeof (Texts[Count]),
@@ -3533,22 +4669,62 @@ EdMainMenu (
         break;
       case 3:
         if (EdIsConfigEditable (State, &Reason)) {
-          EdKextsEditor (State);
+          EdKextsEditor (State, &mKindKexts);
         } else {
           EdUiNotify (Ui, Reason, TRUE);
         }
 
         break;
       case 4:
+      case 5:
+        if (EdIsConfigEditable (State, &Reason)) {
+          if (Choice == 4) {
+            EdListsMenu (State);
+          } else {
+            EdSwitchesEditor (State);
+          }
+        } else {
+          EdUiNotify (Ui, Reason, TRUE);
+        }
+
+        break;
+      case 6:
+        if (EdIsConfigEditable (State, &Reason)) {
+          EdCheckConfigScreen (State);
+        } else {
+          EdUiNotify (Ui, Reason, TRUE);
+        }
+
+        break;
+      case 7:
+        EdLogViewer (State);
+        break;
+      case 8:
+        EdPanicViewer (State);
+        break;
+      case 9:
+      case 10:
+        if (EdIsConfigEditable (State, &Reason)) {
+          if (Choice == 9) {
+            EdCompareConfigs (State);
+          } else {
+            EdRestoreBackup (State);
+          }
+        } else {
+          EdUiNotify (Ui, Reason, TRUE);
+        }
+
+        break;
+      case 11:
         EdConfigChooser (State);
         break;
-      case 5:
+      case 12:
         if (EdUiConfirm (Ui, "Restart the computer?")) {
           EdRestart (State);
         }
 
         break;
-      case 6:
+      case 13:
         OcRestoreBootArgs ();
         EdSetStatus (State->Status, sizeof (State->Status), &State->StatusIsError, FALSE, "The original boot arguments are back");
         break;

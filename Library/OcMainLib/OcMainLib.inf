@@ -53,6 +53,7 @@
   gOcVendorVariableGuid
 
 [Protocols]
+  gOcLogProtocolGuid                  ## SOMETIMES_CONSUMES
   gEfiAudioDecodeProtocolGuid         ## SOMETIMES_CONSUMES
   gEfiDevicePathProtocolGuid          ## CONSUMES
   gEfiDevicePathProtocolGuid          ## CONSUMES

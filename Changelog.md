@@ -5,6 +5,10 @@ OpenCore Changelog
 - Added minor configuration sample improvements, thx @ilikesn0w
 - Fixed not detecting CD/DVD media type in boot picker leading to incorrect icon selection, thx @ilikesn0w
 - Added `AllowPickerEdit` Security option: `F2` in the builtin picker and OpenCanopy opens an options editor to change boot arguments (typed or with a list of usual flags; for a single boot or permanently) and `config.plist` (switches, numbers, strings, data) without leaving OpenCore
+- Added `Kernel panic log` screen to the options editor to read a panic saved in NVRAM
+- Added `Compare configs` and `Undo the last save` to the options editor, and lists of kernel patches, blocks and booter patches
+- Added `Check the config` and `Log` screens to the options editor
+- Added `Drivers, ACPI, Tools` lists (on/off and order) and a `Quirks` screen with the usual switches to the options editor
 - Added `Kexts` item to the options editor: all kexts of `Kernel` -> `Add` in the load order, switching them on and off, moving them with `+` and `-`, and a check of the order with `OSBundleLibraries` of the kexts, which `F5` can fix
 - Added `Config file` item to the options editor to choose between `config.plist`, `config2.plist` and any other `config*.plist` file of the OpenCore directory, for a single start or until changed, similar to Clover
 - Added source ranges of parsed elements to OcXmlLib (`XmlNodeSourceRange`)

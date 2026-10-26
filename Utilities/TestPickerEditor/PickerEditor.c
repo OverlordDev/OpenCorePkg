@@ -378,9 +378,16 @@ typedef struct {
 #define MENU_FLAGS     1
 #define MENU_CONFIG    2
 #define MENU_KEXTS     3
-#define MENU_CHOOSER   4
-#define MENU_RESTART   5
-#define MENU_PUT_BACK  6
+#define MENU_LISTS     4
+#define MENU_QUIRKS    5
+#define MENU_CHECK     6
+#define MENU_LOG       7
+#define MENU_PANIC     8
+#define MENU_COMPARE   9
+#define MENU_UNDO      10
+#define MENU_CHOOSER   11
+#define MENU_RESTART   12
+#define MENU_PUT_BACK  13
 
 STATIC SCRIPT_ENTRY  mScript[4096];
 STATIC UINTN         mScriptLength;
@@ -958,6 +965,34 @@ TestStorageReadFileUnicode (
   }
 
   return Data;
+}
+
+STATIC CONST CHAR8  *mFakeLog;
+STATIC CONST CHAR8  *mFakePanic;
+
+VOID *
+TestReadPanic (
+  OUT UINT32  *Size
+  )
+{
+  VOID  *Copy;
+
+  if (mFakePanic == NULL) {
+    return NULL;
+  }
+
+  *Size = (UINT32)strlen (mFakePanic);
+  Copy  = AllocatePool (*Size + 1);
+  CopyMem (Copy, mFakePanic, *Size + 1);
+  return Copy;
+}
+
+CONST CHAR8 *
+TestGetLogBuffer (
+  VOID
+  )
+{
+  return mFakeLog;
 }
 
 BOOLEAN
@@ -3833,7 +3868,7 @@ TestKexts (
   Press (KeyMinus, 1);
   Press (KeyF5, 1);
   RunEditorToLook ();
-  CHECK (OnScreenNow ("(there are no kexts in Kernel > Add)"));
+  CHECK (OnScreenNow ("(there is nothing in Kernel > Add)"));
   CHECK (OnScreenNow ("0 of 0 on"));
 
   {
@@ -4120,6 +4155,399 @@ ShowScreens (
   mShowScreens = FALSE;
 }
 
+
+STATIC
+VOID
+TestOtherLists (
+  IN CONST VOID  *Original,
+  IN UINT32      OriginalSize
+  )
+{
+  UINT32  Size;
+  VOID    *Data;
+  CHAR8   *Text;
+
+  RemoveKexts ();
+  WriteTestFile ("config.plist", Original, OriginalSize);
+  RemoveTestFile ("config.plist.bak");
+
+  //
+  // The menu of the lists, and drivers: the files are not there, so what is on is marked.
+  //
+  ScriptReset ();
+  Press (KeyDown, MENU_LISTS);
+  Press (KeyEnter, 1);
+  RunEditorToLook ();
+  CHECK (OnScreenNow ("Drivers"));
+  CHECK (OnScreenNow ("ACPI files"));
+  CHECK (OnScreenNow ("ACPI patches"));
+  CHECK (OnScreenNow ("Tools"));
+  CHECK (OnScreenNow ("Entries"));
+
+  ScriptReset ();
+  Press (KeyDown, MENU_LISTS);
+  Press (KeyEnter, 1);
+  Press (KeyEnter, 1);                 // Drivers
+  RunEditorToLook ();
+  CHECK (OnScreenNow ("config.plist: 2 of 51 on, 2 with problems"));
+  CHECK (OnScreenNow ("Drivers are loaded from the top to the bottom"));
+  CHECK (OnScreenNow ("OpenRuntime.efi"));
+  CHECK (OnScreenNow ("F10: save"));
+  CHECK (!OnScreenNow ("F5"));
+
+  //
+  // With the files there, nothing is wrong. Move OpenRuntime up, switch another on, and save.
+  //
+  WriteTestFile ("Drivers/OpenRuntime.efi", "x", 1);
+  WriteTestFile ("Drivers/HfsPlus.efi", "x", 1);
+  WriteTestFile ("Drivers/OpenCanopy.efi", "x", 1);
+  ScriptReset ();
+  Press (KeyDown, MENU_LISTS);
+  Press (KeyEnter, 1);
+  Press (KeyEnter, 1);
+  Press (KeyDown, 1);                  // OpenRuntime.efi
+  Press (KeyMinus, 1);
+  Press (KeyDown, 10);
+  Press (KeySpace, 1);                 // OpenCanopy.efi on
+  Press (KeyF5, 1);                    // does nothing here
+  RunEditorToLook ();
+  CHECK (OnScreenNow ("3 of 51 on"));
+  CHECK (OnScreenNow ("2 unsaved changes"));
+
+  ScriptReset ();
+  Press (KeyDown, MENU_LISTS);
+  Press (KeyEnter, 1);
+  Press (KeyEnter, 1);
+  Press (KeyDown, 1);
+  Press (KeyMinus, 1);
+  Press (KeyDown, 10);
+  Press (KeySpace, 1);
+  Press (KeyF10, 1);
+  Press (KeyEsc, 1);
+  Press (KeyEsc, 2);
+  RUN_EDITOR (NULL);
+  Data = ReadTestFile ("config.plist", &Size);
+  CHECK (Data != NULL && Size == OriginalSize - 1);
+  {
+    EDIT_PLIST  Plist;
+    XML_NODE    *Array;
+
+    CHECK (!EFI_ERROR (EditPlistLoad (&Plist, Data, Size)));
+    Array = EditPlistFindChild (EditPlistFindChild (Plist.Root, "UEFI"), "Drivers");
+    CHECK (AsciiStrCmp (EditPlistGetContent (&Plist, EditPlistFindChild (EditPlistChildValue (Array, 0), "Path")), "OpenRuntime.efi") == 0);
+    CHECK (AsciiStrCmp (EditPlistGetContent (&Plist, EditPlistFindChild (EditPlistChildValue (Array, 1), "Path")), "OpenVariableRuntimeDxe.efi") == 0);
+    CHECK (EditPlistGetBoolean (&Plist, EditPlistFindChild (EditPlistChildValue (Array, 10), "Enabled")));
+    EditPlistFree (&Plist);
+  }
+
+  WriteTestFile ("config.plist", Original, OriginalSize);
+  RemoveTestFile ("config.plist.bak");
+  RemoveKexts ();
+  {
+    CHAR8  Command[600];
+
+    AsciiSPrint (Command, sizeof (Command), "rm -rf '%a/Drivers'", mDirectory);
+    CHECK (system (Command) == 0);
+  }
+
+  //
+  // ACPI patches have no files, tools and entries are lists as well.
+  //
+  ScriptReset ();
+  Press (KeyDown, MENU_LISTS);
+  Press (KeyEnter, 1);
+  Press (KeyDown, 2);
+  Press (KeyEnter, 1);                 // ACPI patches
+  RunEditorToLook ();
+  CHECK (OnScreenNow ("ACPI > Patch") || OnScreenNow ("Patches of ACPI tables"));
+  CHECK (!OnScreenNow ("with problems"));
+
+  //
+  // Quirks: switch two, save, nothing else changes.
+  //
+  ScriptReset ();
+  Press (KeyDown, MENU_QUIRKS);
+  Press (KeyEnter, 1);
+  RunEditorToLook ();
+  CHECK (OnScreenNow ("Quirks and switches"));
+  CHECK (OnScreenNow ("Booter > Quirks > AvoidRuntimeDefrag"));
+
+  ScriptReset ();
+  Press (KeyDown, MENU_QUIRKS);
+  Press (KeyEnter, 1);
+  Press (KeySpace, 1);
+  Press (KeyDown, 1);
+  Press (KeySpace, 1);
+  Press (KeyF10, 1);
+  Press (KeyEsc, 1);
+  Press (KeyEsc, 1);
+  RUN_EDITOR (NULL);
+  Text = ReadTestFile ("config.plist", &Size);
+  CHECK (Text != NULL && (Size != OriginalSize || memcmp (Text, Original, Size) != 0));
+  {
+    UINT32  Errors1;
+    UINT32  Errors2;
+
+    CHECK (!EFI_ERROR (EditPlistCountErrors (Original, OriginalSize, &Errors1)));
+    CHECK (!EFI_ERROR (EditPlistCountErrors (Text, Size, &Errors2)));
+    CHECK (Errors1 == Errors2);
+  }
+
+  //
+  // Esc with changes asks, and discarding leaves the file as it is.
+  //
+  WriteTestFile ("config.plist", Original, OriginalSize);
+  RemoveTestFile ("config.plist.bak");
+  ScriptReset ();
+  Press (KeyDown, MENU_QUIRKS);
+  Press (KeyEnter, 1);
+  Press (KeySpace, 1);
+  Press (KeyEsc, 1);
+  Press (KeyDown, 2);
+  Press (KeyEnter, 1);
+  Press (KeyEsc, 1);
+  RUN_EDITOR (NULL);
+  CHECK (SeenOnScreen ("There are unsaved changes"));
+  Data = ReadTestFile ("config.plist", &Size);
+  CHECK (Data != NULL && Size == OriginalSize && memcmp (Data, Original, Size) == 0);
+
+  mStorage.HasVault = TRUE;
+  ScriptReset ();
+  Press (KeyDown, MENU_QUIRKS);
+  Press (KeyEnter, 1);
+  Press (KeyEnter, 1);
+  Press (KeyEsc, 1);
+  RUN_EDITOR (NULL);
+  CHECK (SeenOnScreen ("The vault is used"));
+  mStorage.HasVault = FALSE;
+}
+
+
+STATIC
+VOID
+TestCheckAndLog (
+  IN CONST VOID  *Original,
+  IN UINT32      OriginalSize
+  )
+{
+  CHAR8   Log[2048];
+  UINT32  Index;
+  UINTN   Length;
+
+  WriteTestFile ("config.plist", Original, OriginalSize);
+  RemoveKexts ();
+
+  //
+  // No log, and a log that is read from its end.
+  //
+  mFakeLog = NULL;
+  ScriptReset ();
+  Press (KeyDown, MENU_LOG);
+  Press (KeyEnter, 1);
+  Press (KeyEnter, 1);
+  Press (KeyEsc, 1);
+  RUN_EDITOR (NULL);
+  CHECK (SeenOnScreen ("There is no log"));
+
+  Length = 0;
+  for (Index = 1; Index <= 60; ++Index) {
+    Length += AsciiSPrint (&Log[Length], sizeof (Log) - Length, "OC: line number %u of the log\n", Index);
+  }
+
+  mFakeLog = Log;
+  ScriptReset ();
+  Press (KeyDown, MENU_LOG);
+  Press (KeyEnter, 1);
+  RunEditorToLook ();
+  CHECK (OnScreenNow ("OpenCore log"));
+  CHECK (OnScreenNow ("line 60 of 60"));
+  CHECK (OnScreenNow ("line number 60 of the log"));
+  CHECK (!OnScreenNow ("line number 2 of the log"));
+
+  ScriptReset ();
+  Press (KeyDown, MENU_LOG);
+  Press (KeyEnter, 1);
+  Press (KeyHome, 1);
+  RunEditorToLook ();
+  CHECK (OnScreenNow ("line number 1 of the log"));
+  CHECK (!OnScreenNow ("line number 60 of the log"));
+  mFakeLog = NULL;
+
+  //
+  // The check: kexts and drivers have no files here, then they have.
+  //
+  ScriptReset ();
+  Press (KeyDown, MENU_CHECK);
+  Press (KeyEnter, 1);
+  RunEditorToLook ();
+  CHECK (OnScreenNow ("Structure: no problems found"));
+  CHECK (OnScreenNow ("problems found in config.plist"));
+  CHECK (OnScreenNow ("! Kexts: Lilu.kext"));
+  CHECK (OnScreenNow ("! Drivers: OpenRuntime.efi"));
+
+  WriteSampleKexts ();
+  WriteTestFile ("Drivers/OpenRuntime.efi", "x", 1);
+  WriteTestFile ("Drivers/HfsPlus.efi", "x", 1);
+  ScriptReset ();
+  Press (KeyDown, MENU_CHECK);
+  Press (KeyEnter, 1);
+  RunEditorToLook ();
+  CHECK (OnScreenNow ("No problems found in config.plist"));
+  CHECK (!OnScreenNow ("! Kexts"));
+
+  //
+  // A kext in the wrong order is told about.
+  //
+  RemoveKextFile ("Lilu.kext/Contents/Info.plist");
+  ScriptReset ();
+  Press (KeyDown, MENU_CHECK);
+  Press (KeyEnter, 1);
+  RunEditorToLook ();
+  CHECK (OnScreenNow ("! Kexts: Lilu.kext"));
+  CHECK (OnScreenNow ("Info.plist is missing or broken"));
+
+  RemoveKexts ();
+  {
+    CHAR8  Command[600];
+
+    AsciiSPrint (Command, sizeof (Command), "rm -rf '%a/Drivers'", mDirectory);
+    CHECK (system (Command) == 0);
+  }
+}
+
+
+STATIC
+VOID
+TestCompareAndUndo (
+  IN CONST VOID  *Original,
+  IN UINT32      OriginalSize
+  )
+{
+  UINT32      Size;
+  VOID        *Data;
+  VOID        *Backup;
+  UINT32      BackupSize;
+  EDIT_PLIST  Plist;
+  XML_NODE    *Array;
+
+  RemoveKexts ();
+  RemoveTestFile ("config2.plist");
+  WriteTestFile ("config.plist", Original, OriginalSize);
+  RemoveTestFile ("config.plist.bak");
+
+  //
+  // Nothing to compare with.
+  //
+  ScriptReset ();
+  Press (KeyDown, MENU_COMPARE);
+  Press (KeyEnter, 1);
+  Press (KeyEnter, 1);
+  Press (KeyEsc, 1);
+  RUN_EDITOR (NULL);
+  CHECK (SeenOnScreen ("There is no other config to compare with"));
+
+  //
+  // The same file: no differences. A variant: the timeout and a kext differ.
+  //
+  WriteTestFile ("config2.plist", Original, OriginalSize);
+  ScriptReset ();
+  Press (KeyDown, MENU_COMPARE);
+  Press (KeyEnter, 1);
+  Press (KeyEnter, 1);
+  RunEditorToLook ();
+  CHECK (OnScreenNow ("config.plist  ->  config2.plist"));
+  CHECK (OnScreenNow ("No differences"));
+
+  WriteConfigVariant ("config2.plist", 77, TRUE);
+  CHECK (!EFI_ERROR (EditPlistLoad (&Plist, Original, OriginalSize)));
+  Array = EditPlistFindChild (EditPlistFindChild (Plist.Root, "Kernel"), "Add");
+  CHECK (Array != NULL);
+  EditPlistFree (&Plist);
+
+  ScriptReset ();
+  Press (KeyDown, MENU_COMPARE);
+  Press (KeyEnter, 1);
+  Press (KeyEnter, 1);
+  RunEditorToLook ();
+  CHECK (OnScreenNow ("~ /Misc/Boot/Timeout: 5  ->  77"));
+  CHECK (!OnScreenNow ("No differences"));
+  CHECK (OnScreenNow ("- only in the first"));
+
+  //
+  // Undo: nothing to put back at first, then a saved change can be taken back.
+  //
+  ScriptReset ();
+  Press (KeyDown, MENU_UNDO);
+  Press (KeyEnter, 1);
+  Press (KeyEnter, 1);
+  Press (KeyEsc, 1);
+  RUN_EDITOR (NULL);
+  CHECK (SeenOnScreen ("There is no config.plist.bak"));
+
+  ScriptReset ();
+  Press (KeyDown, MENU_KEXTS);
+  Press (KeyEnter, 1);
+  Press (KeyDown, 4);
+  Press (KeySpace, 1);
+  Press (KeyF10, 1);
+  Press (KeyEsc, 3);
+  RUN_EDITOR (NULL);
+  Data = ReadTestFile ("config.plist", &Size);
+  CHECK (Data != NULL && Size == OriginalSize - 1);
+
+  ScriptReset ();
+  Press (KeyDown, MENU_UNDO);
+  Press (KeyEnter, 1);
+  Press (KeyEsc, 1);                   // no
+  Press (KeyEsc, 1);
+  RUN_EDITOR (NULL);
+  Data = ReadTestFile ("config.plist", &Size);
+  CHECK (Data != NULL && Size == OriginalSize - 1);
+
+  ScriptReset ();
+  Press (KeyDown, MENU_UNDO);
+  Press (KeyEnter, 1);
+  Press (KeyEnter, 1);                 // yes
+  Press (KeyEsc, 1);
+  RUN_EDITOR (NULL);
+  CHECK (SeenOnScreen ("The previous config is back, restart to apply it"));
+  Data   = ReadTestFile ("config.plist", &Size);
+  Backup = ReadTestFile ("config.plist.bak", &BackupSize);
+  CHECK (Data != NULL && Size == OriginalSize && memcmp (Data, Original, Size) == 0);
+  CHECK (Backup != NULL && BackupSize == OriginalSize - 1);
+
+  RemoveTestFile ("config2.plist");
+  WriteTestFile ("config.plist", Original, OriginalSize);
+  RemoveTestFile ("config.plist.bak");
+}
+
+
+STATIC
+VOID
+TestPanicLog (
+  VOID
+  )
+{
+  mFakePanic = NULL;
+  ScriptReset ();
+  Press (KeyDown, MENU_PANIC);
+  Press (KeyEnter, 1);
+  Press (KeyEnter, 1);
+  Press (KeyEsc, 1);
+  RUN_EDITOR (NULL);
+  CHECK (SeenOnScreen ("No panic log in NVRAM"));
+
+  mFakePanic = "panic(cpu 0 caller 0xffffff80): Kernel trap\nBacktrace (CPU 0):\n0xfffffe: frame one\n0xfffffe: frame two\n";
+  ScriptReset ();
+  Press (KeyDown, MENU_PANIC);
+  Press (KeyEnter, 1);
+  RunEditorToLook ();
+  CHECK (OnScreenNow ("Kernel panic log"));
+  CHECK (OnScreenNow ("panic(cpu 0 caller 0xffffff80): Kernel trap"));
+  CHECK (OnScreenNow ("frame two"));
+  mFakePanic = NULL;
+}
+
 /**
   Show the kexts screen of the configuration in the directory of PICKER_TEST_DIR, as it is and after F5.
   Nothing is saved.
@@ -4222,6 +4650,10 @@ ENTRY_POINT (
   TestConfigChooserMany ();
   TestKexts (Original, Size);
   TestManyKexts ();
+  TestOtherLists (Original, Size);
+  TestCheckAndLog (Original, Size);
+  TestCompareAndUndo (Original, Size);
+  TestPanicLog ();
   free (Original);
 
   printf ("%u checks, %u failures\n", mChecks, mFailures);

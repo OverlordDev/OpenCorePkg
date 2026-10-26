@@ -43,6 +43,7 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 #include <Library/UefiRuntimeServicesTableLib.h>
 
 #include <Protocol/OcInterface.h>
+#include <Protocol/OcLog.h>
 
 #include <ShimVars.h>
 
@@ -1070,4 +1071,23 @@ OcMiscUefiQuirksLoaded (
     &Config->Misc.Security.ScanPolicy,
     NULL
     );
+}
+
+CONST CHAR8 *
+OcMiscGetLogBuffer (
+  VOID
+  )
+{
+  EFI_STATUS       Status;
+  OC_LOG_PROTOCOL  *Log;
+  CHAR8            *Buffer;
+
+  Status = gBS->LocateProtocol (&gOcLogProtocolGuid, NULL, (VOID **)&Log);
+  if (EFI_ERROR (Status)) {
+    return NULL;
+  }
+
+  Buffer = NULL;
+  Status = Log->GetLog (Log, &Buffer);
+  return EFI_ERROR (Status) ? NULL : Buffer;
 }

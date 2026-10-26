@@ -39,6 +39,8 @@ CFLAGS  += -DOcDeleteFile=TestDeleteFile \
            -DOcReadFileFromDirectory=TestReadFileFromDirectory \
            -DOcStorageReadFileUnicode=TestStorageReadFileUnicode \
            -DOcStorageExistsFileUnicode=TestStorageExistsFileUnicode \
+           -DOcMiscGetLogBuffer=TestGetLogBuffer \
+           -DOcReadApplePanicLog=TestReadPanic \
            -DOcSafeFileOpen=TestSafeFileOpen \
            -DOcScanDirectory=TestScanDirectory
 

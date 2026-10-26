@@ -4343,6 +4343,27 @@ nvram 4D1FDA02-38C7-4A6A-9CC6-4BCCA8B30102:boot-log |
   result with \texttt{F10} or when leaving the editor.
   \item \emph{Kexts} --- all kexts of \texttt{Kernel} $\rightarrow$ \texttt{Add} in the
   order they are loaded in (see below).
+  \item \emph{Drivers, ACPI, Tools} --- the same list as for kexts, for
+  \texttt{UEFI} $\rightarrow$ \texttt{Drivers}, \texttt{ACPI} $\rightarrow$ \texttt{Add} and
+  \texttt{Patch}, \texttt{Misc} $\rightarrow$ \texttt{Tools} and \texttt{Entries}, \texttt{Kernel} $\rightarrow$ \texttt{Patch} and \texttt{Block}, \texttt{Booter} $\rightarrow$ \texttt{Patch}:
+  \texttt{Space} switches an item on and off, \texttt{+} and \texttt{-} move it, \texttt{F10}
+  saves. Items whose file is missing from the OpenCore directory are marked with \texttt{!}.
+  \item \emph{Quirks} --- the usual boolean switches of \texttt{Booter}, \texttt{Kernel},
+  \texttt{UEFI}, \texttt{ACPI} and \texttt{Misc} in one list (the ones the configuration has).
+  \item \emph{Check the config} --- lists the problems which can be found without starting
+  anything: the structure of the file (as OpenCore parses it), kexts which are in the wrong order
+  or lack files or kexts they need, and files of drivers, ACPI tables and tools which are not
+  in the OpenCore directory. The values of settings are not checked, use \texttt{ocvalidate}.
+  \item \emph{Log} --- the OpenCore log kept in memory (when \texttt{Misc} $\rightarrow$
+  \texttt{Debug} $\rightarrow$ \texttt{Target} has logging on), starting at its end.
+  \item \emph{Kernel panic log} --- the text of a kernel panic which macOS saved in NVRAM
+  (\texttt{aapl,panic-info}), if there is one, readable without booting. It needs
+  \texttt{keepsyms=1} and \texttt{debug=0x100} to be useful, and NVRAM that keeps what the kernel wrote.
+  \item \emph{Compare configs} --- pick another \texttt{config*.plist} and read what differs
+  from the one in use: keys and list items present in one only, and changed values
+  (\texttt{-} first only, \texttt{+} second only, \texttt{\textasciitilde} changed).
+  \item \emph{Undo the last save} --- put \texttt{config.plist.bak}, the config from before the
+  last save of the editor, back; the present config becomes the backup.
   \item \emph{Config file} --- choose the configuration file OpenCore starts with
   (see below).
   \item \emph{Restart}.
